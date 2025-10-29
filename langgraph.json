@@ -3,7 +3,7 @@
         "."
     ],
     "graphs": {
-        "travel": "./src/agent/graph.py:build_graph_with_langgraph_studio"
+        "pet_food": "./src/agent/graph.py:build_graph_with_langgraph_studio"
     }
 }
 
