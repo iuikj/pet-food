@@ -1,0 +1,10 @@
+{
+    "dependencies": [
+        "."
+    ],
+    "graphs": {
+        "travel": "./src/agent/graph.py:build_graph_with_langgraph_studio"
+    }
+}
+
+
