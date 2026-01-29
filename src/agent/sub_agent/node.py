@@ -1,6 +1,6 @@
 from typing import Literal, cast
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_dev_utils import (
     has_tool_calling,
     load_chat_model,
@@ -25,6 +25,11 @@ async def subagent_call_model(
     _, args = parse_tool_calling(last_ai_message, first_tool_call_only=True)
     task_name = cast(dict, args).get("content", "")
 
+    # 预防模型多次调用网络搜索
+    messages = state["temp_task_messages"] if "temp_task_messages" in state else []
+
+    # if len(messages) >0 and isinstance(messages[-1],ToolMessage) and
+
     model = load_chat_model(
         model=run_time.context.sub_model,
         **{
@@ -34,7 +39,6 @@ async def subagent_call_model(
         [get_weather, tavily_search, query_note]
     )
 
-    messages = state["temp_task_messages"] if "temp_task_messages" in state else []
 
     notes = state["note"] if "note" in state else {}
 
@@ -51,7 +55,7 @@ async def subagent_call_model(
                     user_requirement=user_requirement,
                 )
             ),
-            HumanMessage(content=f"我的任务是：{task_name}，请帮我完成"),
+            HumanMessage(content=f"我的任务是：{task_name}，请帮我完成,宠物的基础信息是{state["pet_information"]}"),
             *messages,
         ]
     )

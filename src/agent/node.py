@@ -24,9 +24,18 @@ async def call_model(state: State) -> Command[Literal["tools", "subagent", "stru
     model = load_chat_model(
         model=run_time.context.plan_model,
         **{
-            "max_retries": 3
+            "max_retries": 3,
+            # "enable_thinking" : True,  # 在使用智谱的时候不用这个配置项
         }
     )
+    if state.get("plan"):
+        # 如果已经制定了计划了，就不使用thinking
+        model = load_chat_model(
+            model=run_time.context.plan_model,
+            **{
+                "max_retries": 3
+            }
+        )
 
     tools = [
         write_plan,
@@ -74,36 +83,7 @@ async def call_model(state: State) -> Command[Literal["tools", "subagent", "stru
     )
 
 
-async def structure_report(state: State):
-    """
-    将deep agent所产出的结果（note），转换成结构化的信息来解析
-    :param state:
-    :return:
-    """
-    run_time = get_runtime(Context)
-    model = load_chat_model(
-        model=run_time.context.report_model,
-        **{
-            "max_retries": 3
-        }
-    )
 
-    if state["temp_note"].type == "diet_plan":
-        structure_model = model.with_structured_output(WeeklyDietPlan)
-        response = await structure_model.ainvoke(
-            [
-                SystemMessage(content=run_time.context.plan_prompt),
-                HumanMessage(content=state["temp_note"].content),
-            ]
-        )
-
-        return {
-            "weekly_diet_plans": [response],
-        }
-    else:
-        return {
-            "weekly_diet_plans": [],
-        }
 
 
 async def gather(state: State):

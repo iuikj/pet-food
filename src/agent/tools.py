@@ -83,7 +83,7 @@ write_note = create_write_note_tool(
     参数：
     content: str, 笔记内容
     type: Annotated[Literal["research", "diet_plan"]
-
+    如果是制定确切的某周的饮食计划（按照报告模版的）type为diet_plan，其余作为信息收集的部分皆为research
     """,
     message_key="temp_write_note_messages",
 )
@@ -143,7 +143,7 @@ def get_weather(city: str):
 async def tavily_search(query: Annotated[str, "要搜索的内容"]):
     """互联网搜索工具，用于获取最新的网络信息和资料。注意：为控制上下文长度和降低调用成本，每个任务执行过程中仅可调用一次此工具。"""
     tavily_search = TavilySearch(
-        max_results=5,
+        max_results=3,
     )
     result = await tavily_search.ainvoke({"query": query})
     return result

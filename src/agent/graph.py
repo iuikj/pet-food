@@ -1,8 +1,9 @@
 from dotenv import load_dotenv
 from langgraph.graph.state import StateGraph
 
-from src.agent.node import call_model, tool_node,structure_report,gather
-from src.agent.state import State, StateInput
+from src.agent.node import call_model, tool_node,gather
+from src.agent.structrue_agent.graph import build_structure_agent
+from src.agent.state import State, StateInput,StateOutput
 from src.agent.sub_agent.graph import build_sub_agent
 from src.agent.utils.context import Context
 from src.agent.write_agent.graph import build_write_agent
@@ -11,12 +12,12 @@ load_dotenv(dotenv_path=".env", override=True)
 
 
 def build_graph_with_langgraph_studio():
-    graph = StateGraph(State, input_schema=StateInput, context_schema=Context)
+    graph = StateGraph(State, input_schema=StateInput,output_schema=StateOutput, context_schema=Context)
     graph.add_node("call_model", call_model)
     graph.add_node("tools", tool_node)
     graph.add_node("subagent", build_sub_agent())
     graph.add_node("write_note", build_write_agent())
-    graph.add_node("structure_report", structure_report)
+    graph.add_node("structure_report", build_structure_agent())
     graph.add_node("gather", gather)
 
     graph.add_edge("__start__", "call_model")
