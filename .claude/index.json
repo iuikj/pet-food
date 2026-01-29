@@ -1,0 +1,240 @@
+{
+  "timestamp": "2025-01-29T00:00:00Z",
+  "project_name": "pet-food",
+  "project_type": "langgraph_multi_agent_system",
+  "description": "基于 LangGraph 的宠物饮食计划智能助手，使用多智能体架构为宠物生成定制化的月度营养饮食计划",
+  "modules": [
+    {
+      "name": "agent",
+      "path": "src/agent",
+      "type": "core",
+      "description": "多智能体核心系统，包含主智能体、子智能体、写入智能体和结构化智能体",
+      "submodules": [
+        {
+          "name": "main_agent",
+          "path": "src/agent/graph.py",
+          "entry": "build_graph_with_langgraph_studio",
+          "description": "主智能体，负责任务分解、计划管理和整体协调"
+        },
+        {
+          "name": "sub_agent",
+          "path": "src/agent/sub_agent",
+          "entry": "build_sub_agent",
+          "description": "子智能体，执行主智能体分配的具体任务"
+        },
+        {
+          "name": "write_agent",
+          "path": "src/agent/write_agent",
+          "entry": "build_write_agent",
+          "description": "写入智能体，负责将执行结果写入笔记"
+        },
+        {
+          "name": "structure_agent",
+          "path": "src/agent/structrue_agent",
+          "entry": "build_structure_agent",
+          "description": "结构化智能体，将笔记转换为结构化的 WeeklyDietPlan 对象"
+        }
+      ],
+      "key_files": [
+        "src/agent/graph.py",
+        "src/agent/state.py",
+        "src/agent/node.py",
+        "src/agent/tools.py",
+        "src/agent/prompts/prompt.py",
+        "src/agent/utils/struct.py",
+        "src/agent/utils/context.py",
+        "src/agent/entity/note.py"
+      ],
+      "coverage": {
+        "total_files": 15,
+        "scanned_files": 15,
+        "coverage_percentage": 100
+      }
+    },
+    {
+      "name": "rag",
+      "path": "src/rag",
+      "type": "support",
+      "description": "RAG（检索增强生成）模块，提供知识库和向量检索功能",
+      "key_files": [
+        "src/rag/knowledge.py",
+        "src/rag/milvus.py",
+        "src/rag/component.py",
+        "src/rag/deer_flow/retriever.py",
+        "src/rag/deer_flow/milvus_deerflow.py",
+        "src/rag/custom/langchain_component.py",
+        "src/rag/custom/config_lc.py"
+      ],
+      "coverage": {
+        "total_files": 8,
+        "scanned_files": 3,
+        "coverage_percentage": 37.5,
+        "gaps": [
+          "deer_flow retriever 未详细分析",
+          "custom 组件未详细分析"
+        ]
+      }
+    },
+    {
+      "name": "utils",
+      "path": "src/utils",
+      "type": "utility",
+      "description": "通用工具模块",
+      "key_files": [
+        "src/utils/strtuct.py"
+      ],
+      "coverage": {
+        "total_files": 1,
+        "scanned_files": 1,
+        "coverage_percentage": 100
+      }
+    }
+  ],
+  "configuration": {
+    "dependency_management": "uv/pyproject.toml",
+    "python_version": ">=3.12",
+    "entry_points": {
+      "langgraph": "langgraph.json",
+      "main": "main.py"
+    },
+    "env_template": ".env.example",
+    "env_keys": [
+      "DASHSCOPE_API_KEY",
+      "DEEPSEEK_API_KEY",
+      "ZAI_API_KEY",
+      "MOONSHOT_API_KEY",
+      "TAVILIY_API_KEY",
+      "SILICONFLOW_API_KEY"
+    ]
+  },
+  "architecture": {
+    "pattern": "multi_agent_coordination",
+    "state_management": "LangGraph StateGraph",
+    "agent_communication": "message_passing_with_state_sharing",
+    "tools": [
+      "write_plan",
+      "update_plan",
+      "transfor_task_to_subagent",
+      "ls",
+      "query_note",
+      "write_note",
+      "update_note",
+      "tavily_search",
+      "get_weather"
+    ]
+  },
+  "data_structures": [
+    {
+      "name": "PetInformation",
+      "file": "src/agent/utils/struct.py",
+      "description": "宠物信息（类型、品种、年龄、体重、健康状况）"
+    },
+    {
+      "name": "FoodItem",
+      "file": "src/agent/utils/struct.py",
+      "description": "食物项（含宏量和微量营养素）"
+    },
+    {
+      "name": "SingleMealPlan",
+      "file": "src/agent/utils/struct.py",
+      "description": "单餐计划"
+    },
+    {
+      "name": "DailyDietPlan",
+      "file": "src/agent/utils/struct.py",
+      "description": "每日计划"
+    },
+    {
+      "name": "WeeklyDietPlan",
+      "file": "src/agent/utils/struct.py",
+      "description": "每周计划（同一周内饮食统一）"
+    },
+    {
+      "name": "MonthlyDietPlan",
+      "file": "src/agent/utils/struct.py",
+      "description": "月度计划（分为4周）"
+    },
+    {
+      "name": "PetDietPlan",
+      "file": "src/agent/utils/struct.py",
+      "description": "最终输出的完整报告"
+    }
+  ],
+  "test_coverage": {
+    "status": "未发现测试文件",
+    "test_directories": [],
+    "recommendation": "建议添加 tests/ 目录并编写单元测试和集成测试"
+  },
+  "documentation_coverage": {
+    "root_readme": false,
+    "api_docs": false,
+    "architecture_docs": true,
+    "recommendation": "建议添加 README.md 和 API 文档"
+  },
+  "scan_summary": {
+    "scan_timestamp": "2025-01-29T00:00:00Z",
+    "total_project_files_estimated": 30,
+    "scanned_files": 24,
+    "coverage_percentage": 80,
+    "truncated": false,
+    "ignored_patterns": [
+      ".venv/**",
+      "__pycache__/**",
+      ".git/**",
+      ".idea/**",
+      "*.pyc",
+      ".spec-workflow/**"
+    ],
+    "next_steps": [
+      "深入分析 src/rag/deer_flow/ 模块的自定义检索器",
+      "深入分析 src/rag/custom/ 模块的 LangChain 自定义组件",
+      "添加测试文件和测试目录",
+      "补充 README.md 项目说明文档",
+      "考虑添加 API 文档（如使用 Sphinx 或 MkDocs）"
+    ]
+  },
+  "dependencies": {
+    "core": [
+      "langchain>=0.3.27",
+      "langgraph>=0.6.6",
+      "pydantic"
+    ],
+    "integrations": [
+      "langchain-deepseek",
+      "langchain-milvus",
+      "langchain-tavily",
+      "langchain-qwq",
+      "langchain-siliconflow"
+    ],
+    "utilities": [
+      "python-dotenv",
+      "langchain-dev-utils"
+    ]
+  },
+  "workflows": [
+    {
+      "name": "饮食计划生成流程",
+      "description": "从用户输入到生成月度饮食计划的完整流程",
+      "steps": [
+        "1. 用户输入宠物信息（StateInput）",
+        "2. 主智能体调用 call_model 进行任务规划",
+        "3. 主智能体使用 write_plan 初始化任务列表",
+        "4. 主智能体通过 transfor_task_to_subagent 委派任务",
+        "5. 子智能体执行任务（可使用 tavily_search、query_note）",
+        "6. 写入智能体将结果写入笔记（write_note）",
+        "7. 主智能体调用 update_plan 更新任务状态",
+        "8. 重复步骤 4-7 直到所有任务完成",
+        "9. 结构化智能体并行处理所有笔记，转换为 WeeklyDietPlan",
+        "10. gather 节点汇总生成最终的 PetDietPlan 报告"
+      ]
+    }
+  ],
+  "important_constraints": [
+    "必须先调用 write_plan 初始化，后续使用 update_plan 更新",
+    "主智能体不直接执行任务，只负责委派给子智能体",
+    "tavily_search 在每个子任务中仅可调用一次",
+    "笔记类型：确切的某周饮食计划使用 diet_plan 类型，其余使用 research",
+    "月度计划分为4周，每周内饮食统一但各周不同",
+    "营养要素必须包含宏量营养素、微量营养素和具体数值"
+  ]
+}
