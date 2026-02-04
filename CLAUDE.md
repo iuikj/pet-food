@@ -519,3 +519,19 @@ class State(MessagesState, PlanStateMixin, NoteStateMixin):
    - 添加饮食计划导出功能（PDF/Excel）
    - 集成更多营养数据库
    - 添加用户反馈机制
+
+---
+
+## 变更记录 (Changelog)
+
+### 2025-01-30
+- ✅ 添加完整的 FastAPI RESTful API 层
+- ✅ 实现 JWT 认证系统（Access Token + Refresh Token）
+- ✅ 实现任务管理系统（异步执行、状态跟踪）
+- ✅ 实现 SSE 流式输出（LangGraph 执行过程实时推送）
+- ✅ 添加数据库层（PostgreSQL + Redis）
+- ✅ 添加中间件（日志、速率限制、异常处理）
+- ✅ 添加完整的单元测试和集成测试
+- ✅ 添加 Docker 部署配置（开发/生产环境）
+- ✅ 添加 Nginx 反向代理配置
+- ✅ 创建完整的 API 文档（认证流程、部署指南）
