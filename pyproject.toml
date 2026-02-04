@@ -16,8 +16,36 @@ dependencies = [
     "langgraph>=0.6.6",
     "langgraph-cli[inmem]>=0.3.8",
     "python-dotenv>=1.1.1",
+    # FastAPI 和 Web 服务器
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.37.0",
+    "python-multipart>=0.0.20",
+    # 认证和安全（直接使用 bcrypt，避免 passlib 版本兼容问题）
+    "python-jose[cryptography]>=3.3.0",
+    "bcrypt>=4.2.0",
+    # 数据库
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    # Redis
+    "redis>=5.2.1",
+    # HTTP 客户端
+    "httpx>=0.28.1",
+    # 邮件发送
+    "aiosmtplib>=3.0.2",
+    # 邮箱验证
+    "pydantic[email]>=2.11.9",
+    "pydantic[email]>=2.11.9",
+    "passlib>=1.7.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+    "httpx>=0.28.1",
 ]
 
 [[tool.uv.index]]
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-default = true
+url = "https://pypi.org/simple"
