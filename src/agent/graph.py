@@ -1,3 +1,5 @@
+import os
+
 from dotenv import load_dotenv
 from langgraph.graph.state import StateGraph
 
@@ -9,6 +11,7 @@ from src.agent.utils.context import Context
 from src.agent.write_agent.graph import build_write_agent
 
 load_dotenv(dotenv_path=".env", override=True)
+print(os.getenv("ZAI_API_KEY"))
 
 
 def build_graph_with_langgraph_studio():
