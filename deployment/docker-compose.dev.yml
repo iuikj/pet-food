@@ -1,0 +1,89 @@
+# FastAPI 开发环境 Docker Compose 配置
+# 用于快速启动 PostgreSQL 和 Redis 服务
+
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:16-alpine
+    container_name: pet-food-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pet_food
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pet-food-network
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    container_name: pet-food-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pet-food-network
+
+  # pgAdmin（可选，用于数据库管理）
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pet-food-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@petfood.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - pet-food-network
+    profiles:
+      - admin  # 使用 docker-compose --profile admin 启动
+
+  # Redis Commander（可选，用于 Redis 管理）
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: pet-food-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - pet-food-network
+    profiles:
+      - admin  # 使用 docker-compose --profile admin 启动
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  pet-food-network:
+    driver: bridge

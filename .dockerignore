@@ -1,0 +1,48 @@
+# Docker 构建忽略文件
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 测试
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# 文档
+docs/
+*.md
+!README.md
+
+# 部署
+deployment/nginx/ssl/*.pem
+deployment/nginx/ssl/*.key
+
+# 日志
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.bak
+.DS_Store
