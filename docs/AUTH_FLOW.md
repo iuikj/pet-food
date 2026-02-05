@@ -1,16 +1,63 @@
-# 认证系统实现计划
-
-## 概述
+# 认证系统实现说明
 
 本文档描述了用户认证系统的完整实现流程，包括注册、登录、Token 刷新和用户信息获取。
 
 ---
 
+## 目录
+
+1. [技术架构](#技术架构)
+2. [数据模型](#数据模型)
+3. [安全机制](#安全机制)
+4. [API 接口说明](#api-接口说明)
+5. [客户端集成指南](#客户端集成指南)
+6. [使用示例](#使用示例)
+7. [最佳实践](#最佳实践)
+8. [常见问题](#常见问题)
+
+---
+
 ## 技术架构
 
-### 数据模型
+### 认证流程图
 
+```mermaid
+graph LR
+    User[用户] --> Web[Web 界面]
+    User --> | 注册[注册]
+    User --> | 登录[登录]
+
+    Web <-->| API[FastAPI]
+
+    API <-->| SMTP[邮件服务]
+    API <-->| Redis[验证码缓存]
+    API <-->| DB[(PostgreSQL]
+
+    注册 -->| API
+    登录 -->| API
+
+    API <-->| Token刷新
+
+    API --> | DB
 ```
+
+### 分层架构
+
+| 层 | 说明 | 技术栈 |
+|------|------|----------|
+| **表现层** | React/Vue 组件 | React 18+ / Vue 3+ |
+| **API 层** | Axios 拦截封装 | 带自动 Token 刷新 |
+| **路由层** | React Router / Vue Router | 路由守卫 |
+| **状态层** | Zustand / Pinia | 认证状态管理 |
+| **工具层** | 工具函数、加密解密 |
+
+---
+
+## 数据模型
+
+### User 表
+
+```sql
 users 表
 ├── id (String, Primary Key)
 ├── username (String, Unique, Index)
@@ -20,7 +67,11 @@ users 表
 ├── is_superuser (Boolean)
 ├── created_at (DateTime)
 └── updated_at (DateTime)
+```
 
+### RefreshToken 表
+
+```sql
 refresh_tokens 表
 ├── id (String, Primary Key)
 ├── user_id (String, ForeignKey)
@@ -30,12 +81,14 @@ refresh_tokens 表
 └── created_at (DateTime)
 ```
 
-### 安全机制
+---
+
+## 安全机制
 
 | 安全措施 | 实现方式 |
 |---------|---------|
-| 密码存储 | bcrypt 哈希（成本因子 12）|
-| 认证方式 | JWT (Access Token + Refresh Token）|
+| 密码存储 | bcrypt 哈希（成本因子 12） |
+| 认证方式 | JWT (Access Token + Refresh Token） |
 | Token 有效期 | Access: 30 分钟, Refresh: 7 天 |
 | Token 撤销 | Refresh Token 黑名单机制 |
 | 速率限制 | 基于 Redis 的分布式限流 |
@@ -44,441 +97,179 @@ refresh_tokens 表
 
 ## API 接口说明
 
-### 1. 用户注册
+### 认证接口
 
-**接口**: `POST /api/v1/auth/register`
+| 方法 | 路径 | 功能 | 认证要求 |
+|------|------|----------|
+| POST | `/auth/register` | 用户注册 | 无 |
+| POST | `/auth/login` | 用户登录 | 无 |
+| POST | `/auth/refresh` | 刷新 Token | Refresh Token |
+| GET | `/auth/me` | 获取用户信息 | Access Token |
 
-**请求体**:
-```json
-{
-  "username": "user123",
-  "email": "user@example.com",
-  "password": "password123"
-}
-```
+### 验证码接口
 
-**验证规则**:
-- `username`: 3-50 字符，只允许字母、数字、下划线和连字符
-- `email`: 有效的邮箱格式
-- `password`: 至少 6 个字符
-
-**响应**:
-```json
-{
-  "code": 0,
-  "message": "注册成功",
-  "data": {
-    "user": {
-      "id": "uuid",
-      "username": "user123",
-      "email": "user@example.com",
-      "is_active": true,
-      "is_superuser": false,
-      "created_at": "2025-01-29T12:00:00Z"
-    },
-    "tokens": {
-      "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-      "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-      "token_type": "bearer",
-      "expires_in": 1800
-    }
-  }
-}
-```
-
-**错误响应**:
-```json
-// 用户名已存在
-{
-  "code": 409,
-  "message": "用户名已存在",
-  "detail": null
-}
-
-// 邮箱已被注册
-{
-  "code": 409,
-  "message": "邮箱已被注册",
-  "detail": null
-}
-```
-
----
-
-### 2. 用户登录
-
-**接口**: `POST /api/v1/auth/login`
-
-**请求体**:
-```json
-{
-  "username": "user@example.com",  // 支持用户名或邮箱
-  "password": "password123"
-}
-```
-
-**响应**:
-```json
-{
-  "code": 0,
-  "message": "登录成功",
-  "data": {
-    "user": { /* 用户信息 */ },
-    "tokens": {
-      "access_token": "...",
-      "refresh_token": "...",
-      "token_type": "bearer",
-      "expires_in": 1800
-    }
-  }
-}
-```
-
-**错误响应**:
-```json
-// 用户不存在
-{
-  "code": 404,
-  "message": "用户不存在",
-  "detail": null
-}
-
-// 密码错误
-{
-  "code": 401,
-  "message": "用户名或密码错误",
-  "detail": null
-}
-
-// 用户已被禁用
-{
-  "code": 401,
-  "message": "用户已被禁用",
-  "detail": null
-}
-```
-
----
-
-### 3. 刷新 Token
-
-**接口**: `POST /api/v1/auth/refresh`
-
-**请求体**:
-```json
-{
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-**响应**:
-```json
-{
-  "code": 0,
-  "message": "刷新成功",
-  "data": {
-    "access_token": "新的访问令牌",
-    "refresh_token": "新的刷新令牌",
-    "token_type": "bearer",
-    "expires_in": 1800
-  }
-}
-```
-
-**注意**:
-- 每次刷新会撤销旧的 Refresh Token
-- 新的 Refresh Token 有效期重置为 7 天
-- 如果 Refresh Token 被撤销或过期，返回 401
-
----
-
-### 4. 获取用户信息
-
-**接口**: `GET /api/v1/auth/me`
-
-**请求头**:
-```
-Authorization: Bearer {access_token}
-```
-
-**响应**:
-```json
-{
-  "code": 0,
-  "message": "获取成功",
-  "data": {
-    "id": "uuid",
-    "username": "user123",
-    "email": "user@example.com",
-    "is_active": true,
-    "is_superuser": false,
-    "created_at": "2025-01-29T12:00:00Z"
-  }
-}
-```
+| 方法 | 路径 | 功能 |
+|------|------|----------|
+| POST | `/auth/send-code` | 发送验证码 | 无 |
+| POST | `/auth/verify-code` | 验证验证码 | 无 |
+| POST | `/auth/verify-register` | 验证码注册 | 无 |
+| POST | `/auth/password/send-code` | 找回密码验证码 | 无 |
+| POST | `/auth/password/reset` | 重置密码 | 无 |
+| PUT | `/auth/password` | 修改密码 | Access Token |
 
 ---
 
 ## 客户端集成指南
 
-### 1. 注册流程
+### 1. Axios 客户端配置
 
-```
-客户端 → POST /api/v1/auth/register (用户信息)
-       ↓
-    服务端 → 验证用户名/邮箱唯一性
-              ↓ 哈希密码
-              ↓ 创建用户记录
-              ↓ 生成 Access Token (30分钟) + Refresh Token (7天)
-              ↓ 保存 Refresh Token 到数据库
-       ↓
-    客户端 ← 返回用户信息和 Tokens
-       ↓
-    客户端 → 存储 Tokens 到本地存储
-              ↓
-    客户端 → 自动使用 Access Token 认证
-              ↓ Refresh Token 在 Access Token 过期前刷新
+```typescript
+import axios from 'axios';
+
+const apiClient = axios.create({
+  baseURL: 'http://localhost:8000/api/v1',
+  timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+
+// 请求拦截器 - 添加认证 Token
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// 响应拦截器 - 处理 Token 过期（自动刷新）
+apiClient.interceptors.response.use(
+  async (response) => {
+    if (response.status === 401) {
+      // Token 过期，自动刷新
+      const refreshToken = localStorage.getItem('refresh_token');
+      if (refreshToken) {
+        const refreshResponse = await axios.post('/auth/refresh', {
+          refresh_token: refreshToken
+        });
+        if (refreshResponse.data.code === 0) {
+          localStorage.setItem('access_token', refreshResponse.data.data.access_token);
+          localStorage.setItem('refresh_token', refreshResponse.data.data.refresh_token);
+        }
+      }
+    }
+    return response;
+  }
+);
+
+export default apiClient;
 ```
 
 ### 2. 登录流程
 
 ```
-客户端 → POST /api/v1/auth/login (用户名/邮箱 + 密码)
-       ↓
-    服务端 → 查找用户
-              ↓ 验证密码 (bcrypt)
-              ↓ 检查用户激活状态
-              ↓ 生成新的 Tokens
-              ↓ 撤销用户之前的 Refresh Tokens
-       ↓
-    客户端 ← 返回用户信息和 Tokens
+1. 用户输入用户名/邮箱 + 密码
+2. 调用 POST /auth/login
+3. 保存返回的 access_token 和 refresh_token
+4. 后续请求携带 Bearer token
+5. 检测到 401 时自动刷新 token
 ```
 
-### 3. Token 刷新流程
+### 3. 注册流程
 
 ```
-客户端 → 检测 Access Token 即将过期（如剩余 5 分钟）
-       ↓
-    客户端 → POST /api/v1/auth/refresh (Refresh Token)
-       ↓
-    服务端 → 验证 Refresh Token
-              ↓ 检查是否被撤销
-              ↓ 检查是否过期
-              ↓ 撤销旧的 Refresh Token
-              ↓ 生成新的 Tokens
-       ↓
-    客户端 ← 返回新的 Tokens
-       ↓
-    客户端 → 更新本地存储的 Tokens
+选项 A: 直接注册
+1. 用户输入信息
+2. 调用 POST /auth/register
+3. 保存 token
+
+选项 B: 验证码注册（推荐）
+1. 用户输入邮箱
+2. 调用 POST /auth/send-code 获取验证码
+3. 用户输入验证码 + 其他信息
+4. 调用 POST /auth/verify-register
+5. 保存 token
+```
+
+### 4. 找回密码流程
+
+```
+1. 用户输入邮箱
+2. 调用 POST /auth/password/send-code
+3. 用户输入验证码 + 新密码
+4. 调用 POST /auth/password/reset
+5. 提示用户使用新密码登录
 ```
 
 ---
 
 ## 使用示例
 
-### JavaScript (浏览器)
+### 登录请求
 
-```javascript
-// 注册
-const register = async (username, email, password) => {
-  const response = await fetch('http://localhost:8000/api/v1/auth/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, email, password })
-  });
-  const data = await response.json();
-
-  if (data.code === 0) {
-    // 保存 Tokens
-    localStorage.setItem('access_token', data.data.tokens.access_token);
-    localStorage.setItem('refresh_token', data.data.tokens.refresh_token);
-    localStorage.setItem('user', JSON.stringify(data.data.user));
-  }
-};
-
-// 登录
-const login = async (username, password) => {
-  const response = await fetch('http://localhost:8000/api/v1/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password })
-  });
-  const data = await response.json();
-
-  if (data.code === 0) {
-    localStorage.setItem('access_token', data.data.tokens.access_token);
-    localStorage.setItem('refresh_token', data.data.tokens.refresh_token);
-  }
-};
-
-// 认证请求
-const fetchWithAuth = async (url) => {
-  const accessToken = localStorage.getItem('access_token');
-  const response = await fetch(url, {
-    headers: { 'Authorization': `Bearer ${accessToken}` }
-  });
-
-  // 如果 401，尝试刷新 Token
-  if (response.status === 401) {
-    await refreshAccessToken();
-    // 重试请求
-    return fetch(url, {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('access_token')}` }
-    });
-  }
-
-  return response.json();
-};
-
-// 刷新 Token
-const refreshAccessToken = async () => {
-  const refreshToken = localStorage.getItem('refresh_token');
-  const response = await fetch('http://localhost:8000/api/v1/auth/refresh', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken })
-  });
-  const data = await response.json();
-
-  if (data.code === 0) {
-    localStorage.setItem('access_token', data.data.tokens.access_token);
-    localStorage.setItem('refresh_token', data.data.tokens.refresh_token);
-  }
-};
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "test@example.com",
+    "password": "password123"
+  }'
 ```
 
-### Python
+### 刷新 Token 请求
 
-```python
-import requests
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_REFRESH_TOKEN" \
+  -d '{
+    "refresh_token": "YOUR_REFRESH_TOKEN"
+  }'
+```
 
-BASE_URL = "http://localhost:8000/api/v1"
+### 验证码注册请求
 
-class AuthClient:
-    """认证客户端"""
-
-    def __init__(self):
-        self.access_token = None
-        self.refresh_token = None
-
-    def register(self, username: str, email: str, password: str) -> dict:
-        """用户注册"""
-        response = requests.post(
-            f"{BASE_URL}/auth/register",
-            json={"username": username, "email": email, "password": password}
-        )
-        data = response.json()
-
-        if data.get("code") == 0:
-            self.access_token = data["data"]["tokens"]["access_token"]
-            self.refresh_token = data["data"]["tokens"]["refresh_token"]
-            return data["data"]
-        raise Exception(data.get("message"))
-
-    def login(self, username: str, password: str) -> dict:
-        """用户登录"""
-        response = requests.post(
-            f"{BASE_URL}/auth/login",
-            json={"username": username, "password": password}
-        )
-        data = response.json()
-
-        if data.get("code") == 0:
-            self.access_token = data["data"]["tokens"]["access_token"]
-            self.refresh_token = data["data"]["tokens"]["refresh_token"]
-            return data["data"]
-        raise Exception(data.get("message"))
-
-    def refresh_token(self) -> dict:
-        """刷新 Token"""
-        response = requests.post(
-            f"{BASE_URL}/auth/refresh",
-            json={"refresh_token": self.refresh_token}
-        )
-        data = response.json()
-
-        if data.get("code") == 0:
-            self.access_token = data["data"]["tokens"]["access_token"]
-            self.refresh_token = data["data"]["tokens"]["refresh_token"]
-            return data["data"]
-        raise Exception(data.get("message"))
-
-    def get_headers(self) -> dict:
-        """获取认证请求头"""
-        return {"Authorization": f"Bearer {self.access_token}"}
-
-    def request(self, method: str, path: str, **kwargs) -> dict:
-        """发送认证请求"""
-        url = f"{BASE_URL}{path}"
-        kwargs["headers"] = self.get_headers()
-
-        response = requests.request(method, url, **kwargs)
-
-        # 如果 401，尝试刷新 Token 并重试
-        if response.status_code == 401:
-            self.refresh_token()
-            kwargs["headers"] = self.get_headers()
-            response = requests.request(method, url, **kwargs)
-
-        return response.json()
-
-
-# 使用示例
-client = AuthClient()
-
-# 注册
-result = client.register("testuser", "test@example.com", "password123")
-print(f"注册成功，用户 ID: {result['user']['id']}")
-
-# 登录
-result = client.login("testuser", "password123")
-print(f"登录成功，用户名: {result['user']['username']}")
-
-# 认证请求
-result = client.request("GET", "/auth/me")
-print(f"用户信息: {result['data']}")
-
-# 刷新 Token
-result = client.refresh_token()
-print(f"Token 已刷新，有效期: {result['tokens']['expires_in']} 秒")
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/verify-register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "email": "test@example.com",
+    "password": "password123",
+    "code": "123456"
+  }'
 ```
 
 ---
 
-## 安全最佳实践
+## 最佳实践
 
-### 客户端安全
+### Token 存储
 
-1. **Token 存储**
-   - 浏览器: 使用 localStorage 或 sessionStorage
-   - 移动应用: 使用安全存储 (Keychain)
-   - 不要将 Token 存储在 URL 参数中
+```javascript
+// 推荐：存储在 localStorage
+localStorage.setItem('access_token', accessToken);
+localStorage.setItem('refresh_token', refreshToken);
 
-2. **HTTPS 通信**
-   - 生产环境必须使用 HTTPS
-   - 防止中间人攻击
+// 移动端：考虑使用 Keychain
+// 生产环境：考虑使用 HttpOnly Cookie
+```
 
-3. **Token 处理**
-   - Access Token 过期后立即刷新
-   - Refresh Token 丢失后要求用户重新登录
-   - 退出登录时清除本地存储的 Token
+### 自动刷新
 
-### 服务端安全
+```javascript
+// 在响应拦截器中实现
+// 检测 401 错误自动刷新
+// 刷新成功后重试原请求
+```
 
-1. **JWT 配置**
-   - 生产环境使用强密钥（至少 256 位）
-   - 定期轮换 JWT 密钥
-   - 设置合理的 Token 有效期
+### 安全注意事项
 
-2. **密码策略**
-   - 要求至少 8 个字符
-   - 建议包含大小写字母、数字和特殊字符
-   - 使用 bcrypt 哈希（成本因子 >= 12）
-
-3. **速率限制**
-   - 限制登录尝试频率
-   - 限制注册请求频率
-   - 记录失败的认证尝试
+1. **HTTPS**: 生产环境必须使用 HTTPS
+2. **XSS**: 防止 XSS，不信任用户输入
+3. **CSRF**: API 已处理，前端无需额外处理
+4. **Token 安全**: 不要将 Token 暴露在 URL 或日志中
 
 ---
 
@@ -492,7 +283,15 @@ A: 客户端应该：
 3. 如果刷新成功，重试原请求
 4. 如果刷新失败，跳转到登录页面
 
-### Q2: 如何确保用户安全？
+### Q2: 验证码发送失败？
+
+A: 检查以下几点：
+1. SMTP 配置是否正确
+2. 邮箱授权码是否正确
+3. QQ 邮箱需要在设置中开启 SMTP 服务
+4. Gmail 需要开启两步验证并生成应用专用密码
+
+### Q3: 如何确保用户安全？
 
 A: 实现以下安全措施：
 - 密码哈希存储
@@ -501,16 +300,11 @@ A: 实现以下安全措施：
 - 请求速率限制
 - 记录异常登录尝试
 
-### Q3: 支持密码重置吗？
+---
 
-A: 当前版本暂不支持密码重置，后续可以添加：
-- 发送验证码到邮箱
-- 验证码有效期 15 分钟
-- 重置成功后撤销所有 Refresh Token
+## 相关文档
 
-### Q4: 如何注销登录？
-
-A: 注销流程：
-1. 客户端清除本地存储的 Tokens
-2. 可选：调用服务端接口撤销 Refresh Token
-3. 跳转到登录页面
+- [API 接口文档](api/)
+- [API 错误码说明](api/errors.md)
+- [API 配置说明](../API_CONFIG.md)
+- [前端开发指南](frontend/)

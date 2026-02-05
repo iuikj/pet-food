@@ -19,6 +19,7 @@ cp .env.example .env
    - `JWT_SECRET_KEY`: JWT 密钥（生产环境必须修改）
    - `DATABASE_URL`: PostgreSQL 连接字符串
    - `REDIS_URL`: Redis 连接字符串
+   - `SMTP_*`: 邮件发送配置
 
 3. 启动依赖服务（PostgreSQL 和 Redis）：
 ```bash
@@ -65,7 +66,7 @@ docker-compose -f deployment/docker-compose.dev.yml up -d
 
 **生成安全的 JWT 密钥：**
 ```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
+python -c "import secrets; print('JWT_SECRET_KEY=' + secrets.token_urlsafe(32))"
 ```
 
 ### 4. 数据库配置 (PostgreSQL)
@@ -95,7 +96,42 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 - 无密码: `redis://localhost:6379/0`
 - 有密码: `redis://:password@localhost:6379/0`
 
-### 6. CORS 配置
+### 6. 邮件配置
+
+| 配置项 | 说明 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `SMTP_HOST` | SMTP 服务器地址 | smtp.qq.com | QQ/Gmail 等 SMTP 地址 |
+| `SMTP_PORT` | SMTP 端口 | 587 | TLS 使用 587，SSL 使用 465 |
+| `SMTP_USERNAME` | SMTP 用户名 | "" | 登录邮箱地址 |
+| `SMTP_PASSWORD` | SMTP 密码 | "" | 登录邮箱密码或授权码 |
+| `SMTP_FROM_EMAIL` | 发件人邮箱 | "" | 发件人邮箱 |
+| `SMTP_USE_TLS` | 是否使用 TLS | true | SSL 使用 false，TLS 使用 true |
+
+**邮箱配置示例：**
+
+```bash
+# QQ 邮箱
+SMTP_HOST=smtp.qq.com
+SMTP_PORT=587
+SMTP_USERNAME=your-email@qq.com
+SMTP_PASSWORD=your-authorization-code
+SMTP_FROM_EMAIL=your-email@qq.com
+SMTP_USE_TLS=true
+
+# Gmail 邮箱
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
+SMTP_FROM_EMAIL=your-email@gmail.com
+SMTP_USE_TLS=true
+```
+
+**获取邮箱授权码：**
+- **QQ 邮箱**: 登录 QQ 邮箱 → 设置 → 账户 → POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV服务 → 生成授权码
+- **Gmail**: 账户 → 安全 → 两步验证 → 应用专用密码 → 生成
+
+### 7. CORS 配置
 
 | 配置项 | 说明 | 默认值 | 生产环境建议 |
 |--------|------|--------|--------------|
@@ -113,7 +149,7 @@ CORS_ORIGINS=["http://localhost:3000","http://localhost:8080"]
 CORS_ORIGINS=["https://yourdomain.com","https://www.yourdomain.com"]
 ```
 
-### 7. 安全配置
+### 8. 安全配置
 
 | 配置项 | 说明 | 默认值 | 安全建议 |
 |--------|------|--------|----------|
@@ -121,14 +157,14 @@ CORS_ORIGINS=["https://yourdomain.com","https://www.yourdomain.com"]
 | `ALLOWED_HOSTS` | 允许的主机名 | ["*"] | **生产环境设置为实际域名** |
 | `MAX_REQUEST_SIZE` | 最大请求大小（字节） | 10485760 (10MB) | 根据需求调整 |
 
-### 8. 任务配置
+### 9. 任务配置
 
 | 配置项 | 说明 | 默认值 | 调整建议 |
 |--------|------|--------|----------|
 | `TASK_TIMEOUT_SECONDS` | 任务超时时间（秒） | 3600 (1小时) | 根据实际任务耗时调整 |
 | `TASK_MAX_CONCURRENT` | 最大并发任务数 | 5 | 根据服务器性能调整 |
 
-### 9. 速率限制配置
+### 10. 速率限制配置
 
 | 配置项 | 说明 | 默认值 | 调整建议 |
 |--------|------|--------|----------|
@@ -139,6 +175,16 @@ CORS_ORIGINS=["https://yourdomain.com","https://www.yourdomain.com"]
 **速率限制示例：**
 - `100次/60秒` = 每分钟最多 100 次请求
 - `1000次/3600秒` = 每小时最多 1000 次请求
+
+### 11. 验证码配置
+
+| 配置项 | 说明 | 默认值 | 调整建议 |
+|--------|------|--------|----------|
+| `VERIFICATION_CODE_LENGTH` | 验证码长度 | 6 | 4-8 位 |
+| `VERIFICATION_CODE_EXPIRE_MINUTES` | 验证码有效期（分钟） | 10 | 5-30 分钟 |
+| `VERIFICATION_CODE_MAX_ATTEMPTS` | 最大验证尝试次数 | 3 | 3-5 次 |
+| `VERIFICATION_CODE_COOLDOWN_SECONDS` | 发送冷却时间（秒） | 60 | 30-120 秒 |
+| `VERIFICATION_CODE_MAX_DAILY_SENDS` | 每日最大发送次数 | 10 | 5-20 次 |
 
 ---
 
@@ -218,6 +264,7 @@ CREATE DATABASE pet_food;
 - [ ] 设置 `API_WORKERS` 为合适的进程数
 - [ ] 配置 `LOG_LEVEL=warning` 或 `error`
 - [ ] 启用 `RATE_LIMIT_ENABLED=true`
+- [ ] 配置 SMTP 邮件参数
 
 ---
 
@@ -270,6 +317,14 @@ python -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(32))"
 确保 `CORS_ORIGINS` 包含前端域名：
 - 开发环境：`http://localhost:3000`
 - 生产环境：`https://yourdomain.com`
+
+### Q5: 邮件发送失败？
+
+检查以下几点：
+1. SMTP 配置是否正确（主机、端口、用户名、密码）
+2. 是否使用了授权码而非登录密码
+3. QQ 邮箱需要在设置中开启 SMTP 服务
+4. Gmail 需要开启两步验证并生成应用专用密码
 
 ---
 
