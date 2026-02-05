@@ -504,6 +504,75 @@ class State(MessagesState, PlanStateMixin, NoteStateMixin):
 - 测试 LLM 是否能正确理解和使用工具
 - 验证输出格式是否符合预期
 
+### 数据库迁移注意事项
+
+项目使用 **Alembic** 进行数据库迁移管理，迁移文件位于 `alembic/versions/` 目录。
+
+#### 迁移文件结构
+```
+alembic/
+├── env.py              # 环境配置（已添加 UTF-8 编码支持）
+├── script.py.mako      # 迁移脚本模板
+└── versions/
+    ├── 001_initial_migration.py     # 初始迁移（users, tasks, diet_plans, refresh_tokens）
+    └── 002_add_pets_and_meals.py    # 扩展迁移（pets, meal_records, 用户字段扩展）
+```
+
+#### 迁移操作顺序
+创建涉及外键的迁移时，**必须注意表创建顺序**：
+1. 先创建被引用的表（如 `pets`）
+2. 再创建引用表或添加外键（如 `meal_records`、`diet_plans.pet_id`）
+
+#### Windows 编码问题
+在 Windows PowerShell 终端运行 Alembic 命令可能遇到 GBK 编码错误：
+```
+UnicodeDecodeError: 'gbk' codec can't decode byte...
+```
+
+**解决方案**（任选其一）：
+1. **使用 Python 脚本运行迁移**（推荐）：
+   ```python
+   # run_migration.py
+   import os, sys
+   os.environ['PYTHONUTF8'] = '1'
+   from alembic.config import Config
+   from alembic import command
+   command.upgrade(Config("alembic.ini"), "head")
+   ```
+   然后运行 `uv run python run_migration.py`
+
+2. **设置环境变量后运行**：
+   ```powershell
+   $env:PYTHONUTF8='1'; uv run alembic upgrade head
+   ```
+
+3. **直接执行 SQL 迁移**（紧急情况）：
+   使用 `sqlalchemy.text()` 在 Python 脚本中执行 ALTER TABLE 等 SQL 语句
+
+#### 常用 Alembic 命令
+```bash
+# 查看当前迁移版本
+uv run alembic current
+
+# 升级到最新版本
+uv run alembic upgrade head
+
+# 回滚一个版本
+uv run alembic downgrade -1
+
+# 生成新迁移（自动检测模型变更）
+uv run alembic revision --autogenerate -m "描述"
+
+# 生成空迁移（手动编写）
+uv run alembic revision -m "描述"
+```
+
+#### 迁移前检查清单
+- [ ] 确认 `.env` 中的数据库连接配置正确
+- [ ] 确认 `src/db/models.py` 中的模型与迁移一致
+- [ ] 备份生产数据库（如有必要）
+- [ ] 先在开发环境测试迁移
+
 ---
 
 ## AI 使用指引

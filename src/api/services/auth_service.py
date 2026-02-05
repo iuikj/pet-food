@@ -33,6 +33,9 @@ class AuthService:
             id=user.id,
             username=user.username,
             email=user.email,
+            nickname=user.nickname,
+            phone=user.phone,
+            avatar_url=user.avatar_url,
             is_active=user.is_active,
             is_superuser=user.is_superuser,
             created_at=user.created_at

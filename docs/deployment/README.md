@@ -1,8 +1,6 @@
-# 部署文档
+# 部署指南
 
-## 概述
-
-本文档描述了宠物饮食计划智能助手 API 服务的完整部署流程。
+> Docker 部署和生产环境配置指南
 
 ---
 
@@ -11,10 +9,9 @@
 1. [部署方式](#部署方式)
 2. [环境准备](#环境准备)
 3. [Docker 部署](#docker-部署)
-4. [手动部署](#手动部署)
-5. [Nginx 配置](#nginx-配置)
-6. [监控和日志](#监控和日志)
-7. [故障排查](#故障排查)
+4. [Nginx 配置](#nginx-配置)
+5. [生产环境配置](#生产环境配置)
+6. [故障排查](#故障排查)
 
 ---
 
@@ -39,8 +36,8 @@ docker-compose -f deployment/docker-compose.dev.yml up -d
 
 ```bash
 # 配置环境变量
-cp .env.example .env
-# 编辑 .env 文件，修改生产环境配置
+cp .env.example .env.production
+# 编辑 .env.production 文件，修改生产环境配置
 
 # 构建并启动
 docker-compose -f deployment/docker-compose.prod.yml up -d --build
@@ -66,13 +63,13 @@ docker-compose -f deployment/docker-compose.prod.yml logs -f api
 
 - **Docker**: 20.10+
 - **Docker Compose**: 2.0+
-- **反向代理**: Nginx 1.18+（生产环境）
+- **Nginx**: 1.18+（生产环境）
 
 ---
 
 ## Docker 部署
 
-### 开发环境部署
+### 开发环境
 
 ```bash
 # 1. 克隆代码仓库
@@ -81,22 +78,19 @@ cd pet-food
 
 # 2. 复制环境变量模板
 cp .env.example .env
+# 编辑 .env 文件
 
-# 3. 编辑 .env 文件
-# - 修改 LLM API 密钥
-# - 其他配置可使用默认值
-
-# 4. 启动服务
+# 3. 启动服务
 docker-compose -f deployment/docker-compose.dev.yml up -d
 
-# 5. 查看服务状态
+# 4. 查看服务状态
 docker-compose -f deployment/docker-compose.dev.yml ps
 
-# 6. 查看日志
+# 5. 查看日志
 docker-compose -f deployment/docker-compose.dev.yml logs -f api
 ```
 
-### 生产环境部署
+### 生产环境
 
 #### 1. 环境变量配置
 
@@ -130,15 +124,6 @@ CORS_ALLOW_HEADERS=["*"]
 SECRET_KEY=$(openssl rand -hex 32)
 ALLOWED_HOSTS=["yourdomain.com","www.yourdomain.com"]
 MAX_REQUEST_SIZE=10485760
-
-# ============ 任务配置 ============
-TASK_TIMEOUT_SECONDS=3600
-TASK_MAX_CONCURRENT=10
-
-# ============ 速率限制配置 ============
-RATE_LIMIT_ENABLED=true
-RATE_LIMIT_TIMES=100
-RATE_LIMIT_SECONDS=60
 
 # ============ LLM API 配置 ============
 # 填写实际的 API 密钥
@@ -184,87 +169,6 @@ env $(cat .env.production | xargs) docker-compose -f deployment/docker-compose.p
 docker-compose -f deployment/docker-compose.prod.yml ps
 ```
 
-#### 4. 数据库迁移
-
-```bash
-# 进入 API 容器执行迁移
-docker-compose -f deployment/docker-compose.prod.yml exec api alembic upgrade head
-
-# 或者使用临时容器
-docker run --rm \
-  -v $(pwd)/alembic:/app/alembic \
-  -v $(pwd)/.env:/app/.env \
-  python:3.12 \
-  alembic upgrade head
-```
-
----
-
-## 手动部署
-
-### 系统依赖安装
-
-#### 1. 安装 PostgreSQL
-
-```bash
-# Ubuntu/Debian
-sudo apt-get update
-sudo apt-get install postgresql-16 postgresql-client-16
-
-# macOS
-brew install postgresql@16
-brew services start postgresql@16
-
-# 创建数据库
-sudo -u postgres psql
-CREATE DATABASE petfood;
-CREATE USER petfood WITH PASSWORD 'your_password';
-GRANT ALL PRIVILEGES ON DATABASE petfood TO petfood;
-\q
-```
-
-#### 2. 安装 Redis
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install redis-server
-sudo systemctl start redis-server
-
-# macOS
-brew install redis
-brew services start redis
-```
-
-#### 3. 安装 Python 依赖
-
-```bash
-# 安装 uv
-pip install uv
-
-# 安装项目依赖
-uv pip install -e .
-```
-
-#### 4. 运行数据库迁移
-
-```bash
-alembic upgrade head
-```
-
-#### 5. 启动服务
-
-```bash
-# 使用 Gunicorn 启动
-gunicorn src.api.main:app \
-  --workers 4 \
-  --worker-class uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:8000 \
-  --access-logfile /var/log/pet-food/access.log \
-  --error-logfile /var/log/pet-food/error.log \
-  --log-level info \
-  --timeout 300
-```
-
 ---
 
 ## Nginx 配置
@@ -284,7 +188,7 @@ brew install nginx
 
 ### 配置 Nginx
 
-```bash
+```nginx
 # 复制 Nginx 配置
 sudo cp deployment/nginx/nginx.conf /etc/nginx/sites-available/pet-food
 
@@ -298,72 +202,82 @@ sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-### SSL 证书配置
+### 生产环境 Nginx 配置
 
-使用 Let's Encrypt 获取免费 SSL 证书：
+```nginx
+server {
+    listen 80;
+    listen 443 ssl;
+    server_name yourdomain.com www.yourdomain.com;
 
-```bash
-# 安装 Certbot
-sudo apt-get install certbot python3-certbot-nginx
+    # SSL 证书
+    ssl_certificate /etc/nginx/ssl/cert.pem;
+    ssl_certificate_key /etc/nginx/ssl/key.pem;
 
-# 获取证书
-sudo certbot --nginx -d yourdomain.com
+    # SSE 特殊配置（重要）
+    proxy_buffering off;
+    proxy_cache off;
 
-# 自动续期
-sudo certbot renew --dry-run
+    # 超时设置
+    proxy_connect_timeout 300s;
+    proxy_send_timeout 300s;
+    proxy_read_timeout 300s;
+
+    # 禁用 gzip 对 SSE 的压缩
+    location /api/v1/plans/stream {
+        gzip off;
+        proxy_pass http://api:8000;
+    }
+
+    # 反向代理到 FastAPI
+    location / {
+        proxy_pass http://api:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# 健康检查端点
+location /health {
+    proxy_pass http://api:8000;
+    access_log off;
+}
 ```
 
 ---
 
-## 监控和日志
+## 生产环境配置
 
-### 日志查看
+### 安全配置清单
 
-#### Docker 容器日志
+部署到生产环境前，请务必修改以下配置：
 
-```bash
-# 查看所有服务日志
-docker-compose -f deployment/docker-compose.prod.yml logs
+- [ ] 修改 `JWT_SECRET_KEY` 为随机字符串
+- [ ] 修改 `SECRET_KEY` 为随机字符串
+- [ ] 修改 `DATABASE_URL` 为生产数据库地址
+- [ ] 修改 `REDIS_URL` 为生产 Redis 地址
+- [ ] 修改 `CORS_ORIGINS` 为实际前端域名
+- [ ] 修改 `ALLOWED_HOSTS` 为实际域名
+- [ ] 设置 `API_RELOAD=false`
+- [ ] 设置 `API_WORKERS` 为合适的进程数（CPU 核心数的 75%）
+- [ ] 配置 `LOG_LEVEL=warning` 或 `error`
+- [ ] 启用 `RATE_LIMIT_ENABLED=true`
+- [ ] 配置 SMTP 邮件参数
+- [ ] 设置 SSL 证书
 
-# 跟踪特定服务日志
-docker-compose -f deployment/docker-compose.prod.yml logs -f api
-
-# 查看最近 100 行
-docker-compose -f deployment/docker-compose.prod.yml logs --tail=100 api
-```
-
-#### 日志配置
-
-FastAPI 日志级别可在 `.env` 中配置：
-
-| 级别 | 用途 |
-|------|------|
-| `debug` | 详细的调试信息（仅开发环境） |
-| `info` | 一般信息（推荐生产环境） |
-| `warning` | 警告信息 |
-| `error` | 仅错误信息 |
-
-### 健康检查
+### 生成安全密钥
 
 ```bash
-# 基础健康检查
-curl http://localhost/health
+# 生成 JWT 密钥
+python -c "import secrets; print('JWT_SECRET_KEY=' + secrets.token_urlsafe(32))"
 
-# 详细健康检查
-curl http://localhost/health/detail
+# 生成应用密钥
+python -c "import secrets; print('SECRET_KEY=' + secrets.token_urlsafe(32))"
 
-# 返回示例
-{
-  "code": 0,
-  "message": "服务正常",
-  "data": {
-    "status": "healthy",
-    "components": {
-      "database": {"status": "healthy"},
-      "redis": {"status": "healthy"}
-    }
-  }
-}
+# 生成数据库密码
+openssl rand -hex 16
 ```
 
 ---
@@ -414,7 +328,7 @@ docker-compose exec redis redis-cli ping
 docker-compose ps
 
 # 检查端口映射
-docker-compose ps  # 查看端口映射
+docker-compose ps
 
 # 检查防火墙
 sudo ufw status  # Ubuntu
@@ -424,7 +338,22 @@ sudo firewall-cmd --list-all  # CentOS
 sudo nginx -t
 ```
 
-#### 4. 任务执行超时
+#### 4. SSE 流式输出中断
+
+**症状**: 流式输出连接意外断开
+
+**解决方案**:
+```nginx
+# 确保 Nginx 配置中禁用了缓冲
+proxy_buffering off;
+proxy_cache off;
+
+# 增加超时设置
+proxy_read_timeout 300s;
+proxy_send_timeout 300s;
+```
+
+#### 5. 任务执行超时
 
 **症状**: 创建的任务一直处于 "running" 状态
 
@@ -433,36 +362,6 @@ sudo nginx -t
 2. 检查网络连接是否正常
 3. 查看任务日志
 4. 增加 `TASK_TIMEOUT_SECONDS` 配置
-
-#### 5. SSE 流式输出中断
-
-**症状**: 流式输出连接意外断开
-
-**解决方案**:
-1. 检查 Nginx 配置中的超时设置
-2. 确保 `proxy_buffering off` 和 `proxy_cache off`
-3. 增加 Nginx `proxy_read_timeout` 配置
-
----
-
-## 性能优化
-
-### 数据库优化
-
-```sql
--- 创建索引（已在模型中定义）
-CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks(user_id, status);
-CREATE INDEX IF NOT EXISTS idx_diet_plans_user ON diet_plans(user_id);
-```
-
-### 应用优化
-
-| 优化项 | 配置 | 说明 |
-|--------|------|------|
-| 工作进程数 | `API_WORKERS=4` | CPU 核数的 75% |
-| 数据库连接池 | 已在 `session.py` 中配置 | pool_size=10, max_overflow=20 |
-| GZip 压缩 | 已在 Nginx 中启用 | 减少传输数据量 |
-| 速率限制 | 已在中间件中实现 | 防止 DDoS 攻击 |
 
 ---
 
@@ -487,24 +386,8 @@ cat backup.sql | docker-compose exec -T postgres psql -U petfood petfood
 
 ---
 
-## 安全建议
+## 相关文档
 
-1. **使用强密钥**
-   - JWT 密钥至少 256 位
-   - 生产环境禁止使用默认密钥
-
-2. **启用 HTTPS**
-   - 生产环境必须使用 HTTPS
-   - 使用有效的 SSL 证书
-
-3. **防火墙配置**
-   - 只开放必要端口（80, 443）
-   - 限制数据库直接访问
-
-4. **定期更新**
-   - 及时更新依赖包
-   - 修复已知安全漏洞
-
-5. **监控和告警**
-   - 配置日志监控
-   - 设置异常告警
+- [后端开发文档](../backend/README.md)
+- [前端对接指南](../frontend/README.md)
+- [系统架构](../architecture/README.md)

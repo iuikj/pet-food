@@ -5,7 +5,8 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import MessagesState, add_messages
 from langchain_dev_utils import PlanStateMixin
 from src.agent.entity.note import NoteStateMixin, Note
-from src.agent.utils.struct import PetInformation, PetDietPlan, WeeklyDietPlan
+from src.agent.utils.struct import PetDietPlan, WeeklyDietPlan
+from src.utils.strtuct import PetInformation
 
 
 class StateInput(MessagesState):

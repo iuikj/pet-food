@@ -1,6 +1,11 @@
 from typing import Dict
 
+from typing import Optional
+from enum import Enum
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from pydantic import BaseModel, Field
+
+from src.utils.strtuct import PetInformation
 
 
 class Macronutrients(BaseModel):
@@ -73,15 +78,6 @@ class MonthlyDietPlan(BaseModel):
                                                     max_length=4)
 
 
-class PetInformation(BaseModel):
-    """
-    宠物信息
-    """
-    pet_type: str = Field(description="宠物类型，如猫、狗等")
-    pet_breed: str = Field(description="宠物品种,如马尔济斯")
-    age: str = Field(description="宠物年龄")
-    pet_weight: float = Field(description="宠物体重")
-    pet_health_status: str = Field(description="宠物健康状态")
 
 
 class PetDietPlan(BaseModel):

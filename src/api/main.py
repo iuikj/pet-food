@@ -186,10 +186,14 @@ async def health_check_detail():
 
 
 # 注册路由
-from src.api.routes import auth, plans, tasks, verification
+from src.api.routes import auth, plans, tasks, verification, pets, meals, calendar, analysis
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["认证"])
 app.include_router(verification.router, prefix="/api/v1/auth", tags=["验证码"])
+app.include_router(pets.router, prefix="/api/v1/pets", tags=["宠物管理"])
+app.include_router(meals.router, prefix="/api/v1/meals", tags=["饮食记录"])
+app.include_router(calendar.router, prefix="/api/v1/calendar", tags=["日历"])
+app.include_router(analysis.router, prefix="/api/v1/analysis", tags=["营养分析"])
 app.include_router(plans.router, prefix="/api/v1/plans", tags=["饮食计划"])
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["任务管理"])
 

@@ -14,7 +14,7 @@ load_dotenv(dotenv_path=".env", override=True)
 print(os.getenv("ZAI_API_KEY"))
 
 
-def build_graph_with_langgraph_studio():
+async def build_graph_with_langgraph_studio():
     graph = StateGraph(State, input_schema=StateInput,output_schema=StateOutput, context_schema=Context)
     graph.add_node("call_model", call_model)
     graph.add_node("tools", tool_node)

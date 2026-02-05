@@ -1,6 +1,15 @@
+# -*- coding: utf-8 -*-
 """
 Alembic 环境配置
 """
+import os
+import sys
+import codecs
+
+# 设置默认编码
+if sys.platform == 'win32':
+    os.environ['PYTHONUTF8'] = '1'
+
 from logging.config import fileConfig
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -8,7 +17,6 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 # 导入配置和模型
-import sys
 from pathlib import Path
 
 # 添加项目根目录到 Python 路径
@@ -25,9 +33,10 @@ config = context.config
 # 设置数据库 URL（使用同步连接字符串用于 Alembic）
 config.set_main_option("sqlalchemy.url", settings.database_url_sync)
 
-# 解析日志配置
+# 解析日志配置（使用 utf-8 编码读取）
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    with codecs.open(config.config_file_name, 'r', encoding='utf-8') as f:
+        fileConfig(config.config_file_name)
 
 # 模型的元数据（用于自动生成迁移）
 target_metadata = Base.metadata
