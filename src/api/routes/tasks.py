@@ -2,13 +2,19 @@
 任务管理路由
 处理任务状态查询、取消等操作
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_db_session
 from src.api.middleware.auth import get_current_user
-from src.api.models.request import TaskListRequest
-from src.api.models.response import ApiResponse, TaskResponse
+from src.api.models.request import TaskStatus, TaskType
+from src.api.models.response import (
+    ApiResponse,
+    TaskResponse,
+    TaskListResponse,
+    TaskCancelResponse,
+    TaskResultResponse
+)
 from src.api.services.task_service import TaskService
 from src.api.utils.errors import to_http_exception, APIException
 
@@ -30,7 +36,6 @@ async def get_task_status(
     """
     try:
         task_service = TaskService(db)
-
         task = await task_service.get_task(task_id, current_user_id)
 
         return ApiResponse(
@@ -52,11 +57,12 @@ async def get_task_status(
         )
 
 
-@router.get("/", response_model=ApiResponse[dict], summary="获取任务列表")
+@router.get("/", response_model=ApiResponse[TaskListResponse], summary="获取任务列表")
 async def list_tasks(
-    status: str | None = None,
-    page: int = 1,
-    page_size: int = 10,
+    status: TaskStatus | None = None,
+    task_type: TaskType | None = None,
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=100, description="每页大小"),
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session)
 ):
@@ -64,15 +70,16 @@ async def list_tasks(
     获取当前用户的任务列表
 
     - **status**: 状态筛选（可选）：pending, running, completed, failed, cancelled
+    - **task_type**: 任务类型筛选（可选）：create_plan, generate_report
     - **page**: 页码（默认 1）
     - **page_size**: 每页大小（默认 10，最大 100）
     """
     try:
         task_service = TaskService(db)
-
         result = await task_service.list_tasks(
             user_id=current_user_id,
-            status=status,
+            status=status.value if status else None,
+            task_type=task_type.value if task_type else None,
             page=page,
             page_size=page_size
         )
@@ -80,12 +87,12 @@ async def list_tasks(
         return ApiResponse(
             code=0,
             message="获取成功",
-            data={
-                "total": result.total,
-                "page": result.page,
-                "page_size": result.page_size,
-                "items": [item.model_dump() for item in result.items]
-            }
+            data=TaskListResponse(
+                total=result.total,
+                page=result.page,
+                page_size=result.page_size,
+                items=[TaskResponse.model_validate(item) for item in result.items]
+            )
         )
 
     except Exception as e:
@@ -99,7 +106,7 @@ async def list_tasks(
         )
 
 
-@router.delete("/{task_id}", response_model=ApiResponse[dict], summary="取消任务")
+@router.delete("/{task_id}", response_model=ApiResponse[TaskCancelResponse], summary="取消任务")
 async def cancel_task(
     task_id: str,
     current_user_id: str = Depends(get_current_user),
@@ -114,16 +121,15 @@ async def cancel_task(
     """
     try:
         task_service = TaskService(db)
-
         task = await task_service.cancel_task(task_id, current_user_id)
 
         return ApiResponse(
             code=0,
             message="任务已取消",
-            data={
-                "task_id": task.id,
-                "status": task.status
-            }
+            data=TaskCancelResponse(
+                task_id=task.id,
+                status=TaskStatus(task.status)
+            )
         )
 
     except APIException as e:
@@ -139,7 +145,7 @@ async def cancel_task(
         )
 
 
-@router.get("/{task_id}/result", response_model=ApiResponse[dict], summary="获取任务结果")
+@router.get("/{task_id}/result", response_model=ApiResponse[TaskResultResponse], summary="获取任务结果")
 async def get_task_result(
     task_id: str,
     current_user_id: str = Depends(get_current_user),
@@ -154,7 +160,6 @@ async def get_task_result(
     """
     try:
         task_service = TaskService(db)
-
         task = await task_service.get_task(task_id, current_user_id)
 
         if task.status != "completed":
@@ -170,10 +175,10 @@ async def get_task_result(
         return ApiResponse(
             code=0,
             message="获取成功",
-            data={
-                "task_id": task.id,
-                "output": task.output_data
-            }
+            data=TaskResultResponse(
+                task_id=task.id,
+                output=task.output_data or {}
+            )
         )
 
     except HTTPException:

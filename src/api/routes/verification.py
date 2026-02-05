@@ -14,14 +14,17 @@ from src.api.models.request import (
     VerifyCodeRequest,
     RegisterWithCodeRequest,
     ResetPasswordRequest,
-    ChangePasswordRequest
+    ChangePasswordRequest,
+    CodeType
 )
 from src.api.models.response import (
     ApiResponse,
     SendCodeResponse,
     VerifyCodeResponse,
     RegisterResponse,
-    TokenResponse
+    TokenResponse,
+    PasswordResetResponse,
+    ChangePasswordResponse
 )
 from src.api.domain.verification import VerificationCodeType, CodeConfig
 from src.api.domain.email_template import EmailTemplateType
@@ -48,8 +51,8 @@ router = APIRouter()
 
 # 验证码类型映射
 CODE_TYPE_MAP = {
-    "register": VerificationCodeType.REGISTER,
-    "password_reset": VerificationCodeType.PASSWORD_RESET,
+    CodeType.REGISTER: VerificationCodeType.REGISTER,
+    CodeType.PASSWORD_RESET: VerificationCodeType.PASSWORD_RESET,
 }
 
 # 邮件模板类型映射
@@ -145,7 +148,7 @@ async def send_verification_code(
     - **code_type**: 验证码类型（register/password_reset）
     """
     try:
-        # 转换验证码类型
+        # 获取验证码类型（直接从枚举映射）
         code_type = CODE_TYPE_MAP.get(request.code_type)
         if not code_type:
             raise ValidationException("不支持的验证码类型")
@@ -170,7 +173,7 @@ async def send_verification_code(
             message="验证码已发送",
             data=SendCodeResponse(
                 email=request.email,
-                code_type=request.code_type,
+                code_type=request.code_type.value,
                 cooldown_seconds=cooldown_seconds,
                 remaining_daily_sends=settings.verification_code_max_daily_sends - daily_count,
                 expire_minutes=settings.verification_code_expire_minutes
@@ -204,7 +207,7 @@ async def verify_code(
     - **code_type**: 验证码类型（register/password_reset）
     """
     try:
-        # 转换验证码类型
+        # 获取验证码类型（直接从枚举映射）
         code_type = CODE_TYPE_MAP.get(request.code_type)
         if not code_type:
             raise ValidationException("不支持的验证码类型")
@@ -333,7 +336,7 @@ async def send_password_reset_code(
             message="如果该邮箱已注册，您将收到验证码",
             data=SendCodeResponse(
                 email=request.email,
-                code_type="password_reset",
+                code_type=CodeType.PASSWORD_RESET.value,
                 cooldown_seconds=cooldown_seconds,
                 remaining_daily_sends=settings.verification_code_max_daily_sends - daily_count,
                 expire_minutes=settings.verification_code_expire_minutes
@@ -348,7 +351,7 @@ async def send_password_reset_code(
             message="如果该邮箱已注册，您将收到验证码",
             data=SendCodeResponse(
                 email=request.email,
-                code_type="password_reset",
+                code_type=CodeType.PASSWORD_RESET.value,
                 cooldown_seconds=0,
                 remaining_daily_sends=settings.verification_code_max_daily_sends,
                 expire_minutes=settings.verification_code_expire_minutes
@@ -356,7 +359,7 @@ async def send_password_reset_code(
         )
 
 
-@router.post("/password/reset", summary="找回密码-重置密码")
+@router.post("/password/reset", response_model=ApiResponse[PasswordResetResponse], summary="找回密码-重置密码")
 async def reset_password(
     request: ResetPasswordRequest,
     auth_service: AuthService = Depends(get_auth_service_with_verification)
@@ -380,7 +383,9 @@ async def reset_password(
         return ApiResponse(
             code=0,
             message="密码重置成功，请使用新密码登录",
-            data=None
+            data=PasswordResetResponse(
+                message="密码重置成功，请使用新密码登录"
+            )
         )
 
     except (ValidationException, RateLimitException) as e:
@@ -397,7 +402,7 @@ async def reset_password(
         )
 
 
-@router.put("/password", summary="修改密码（需登录）")
+@router.put("/password", response_model=ApiResponse[ChangePasswordResponse], summary="修改密码（需登录）")
 async def change_password(
     request: ChangePasswordRequest,
     current_user_id: str = Depends(get_current_user),
@@ -424,7 +429,9 @@ async def change_password(
         return ApiResponse(
             code=0,
             message="密码修改成功",
-            data=None
+            data=ChangePasswordResponse(
+                message="密码修改成功"
+            )
         )
 
     except (ValidationException, RateLimitException) as e:
