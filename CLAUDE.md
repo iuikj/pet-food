@@ -4,6 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 变更记录 (Changelog)
 
+### 2025-02-04
+- 添加 FastAPI RESTful API 层（认证、验证码、任务管理）
+- 添加 PostgreSQL + Redis 数据库层
+- 实现完整的测试套件
+- 添加 Docker 部署配置
+- 创建阶段性总结文档 (docs/PHASE_SUMMARY.md)
+- 更新认证流程文档（包含邮箱验证码和密码重置）
+
 ### 2025-01-29
 - 初始化完整的项目架构文档
 - 添加多智能体系统架构图
@@ -126,8 +134,90 @@ graph TD
 | 模块 | 路径 | 职责 | 状态 | 文档 |
 |------|------|------|------|------|
 | **Agent (多智能体核心)** | `src/agent/` | 任务规划、分解与协调，多智能体协作的核心 | ✅ 核心 | [CLAUDE.md](./src/agent/CLAUDE.md) |
+| **API (RESTful 接口层)** | `src/api/` | FastAPI 应用、路由、服务、中间件 | ✅ 完成 | 详见下方 API 模块说明 |
+| **DB (数据持久化)** | `src/db/` | PostgreSQL + Redis 数据访问层 | ✅ 完成 | 详见下方数据库模块说明 |
 | **RAG (检索增强)** | `src/rag/` | 知识库管理、向量检索、Rerank | 🔄 支持 | [CLAUDE.md](./src/rag/CLAUDE.md) |
 | **Utils (工具)** | `src/utils/` | 通用工具函数 | ⚪ 辅助 | [CLAUDE.md](./src/utils/CLAUDE.md) |
+
+---
+
+## API 模块说明
+
+`src/api/` 目录包含完整的 FastAPI RESTful API 实现，采用分层架构设计。
+
+### 目录结构
+
+```
+src/api/
+├── main.py                 # FastAPI 应用入口
+├── config.py              # 配置管理（Pydantic Settings）
+├── dependencies.py         # 依赖注入（数据库、Redis）
+├── middleware/            # 中间件（CORS、日志、速率限制、异常处理）
+│   ├── auth.py          # JWT 认证中间件
+│   ├── logging.py       # 请求日志
+│   ├── rate_limit.py   # 速率限制
+│   └── exceptions.py    # 全局异常处理
+├── routes/                # API 路由
+│   ├── auth.py         # 认证路由（注册、登录、刷新）
+│   ├── verification.py  # 验证码路由（发送、验证、重置）
+│   ├── plans.py        # 饮食计划路由（创建、查询）
+│   └── tasks.py        # 任务管理路由（创建、取消、流式）
+├── services/              # 业务服务层
+│   ├── auth_service.py    # 认证服务
+│   ├── verification_service.py # 验证码服务
+│   ├── email_service.py   # 邮件服务
+│   ├── plan_service.py   # 饮食计划服务
+│   └── task_service.py   # 任务服务
+├── domain/                # 领域层
+│   ├── verification.py    # 验证码实体和配置
+│   └── email_template.py # 邮件模板
+├── infrastructure/         # 基础设施层
+│   ├── interfaces.py      # 接口定义（IEmailSender, ICodeStorage）
+│   ├── redis_code_storage.py # Redis 验证码存储
+│   ├── code_generator.py # 验证码生成器
+│   └── email_providers/  # 邮件发送实现
+│       └── smtp_email_sender.py
+└── utils/                 # 工具层
+    ├── security.py       # 安全工具（JWT、密码哈希）
+    ├── stream.py         # SSE 流式输出
+    └── errors.py         # 错误定义和转换
+```
+
+### 认证系统
+
+采用 JWT 双 Token 机制：
+- **Access Token**: 有效期 30 分钟，用于 API 认证
+- **Refresh Token**: 有效期 7 天，用于刷新 Access Token
+
+支持的认证方式：
+1. **用户名密码注册** - 直接注册
+2. **验证码注册** - 邮箱验证码注册（防垃圾注册）
+3. **用户名/邮箱登录** - 支持两种方式
+4. **Token 刷新** - 无感刷新 Access Token
+5. **找回密码** - 邮箱验证码重置密码
+6. **修改密码** - 登录后修改密码（验证旧密码）
+
+### 验证码系统
+
+使用 Redis 存储验证码，特性：
+- 6 位数字验证码
+- 可配置的有效期（默认 10 分钟）
+- 冷却时间（默认 60 秒）
+- 每日发送限制（默认 10 次）
+- 最大尝试次数（默认 3 次）
+- 邮件发送失败自动回滚状态
+
+### 任务管理系统
+
+- 异步任务执行
+- 任务状态跟踪（pending/running/completed/cancelled）
+- SSE 流式输出（实时推送执行过程）
+- 支持任务取消
+
+### 相关文档
+- [API 配置说明](docs/API_CONFIG.md)
+- [认证流程说明](docs/AUTH_FLOW.md)
+- [部署指南](docs/DEPLOYMENT.md)
 
 ---
 

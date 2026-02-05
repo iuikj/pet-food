@@ -169,11 +169,55 @@ pet-food/
 
 ### 认证流程
 
-完整的认证流程说明请参考 [AUTH_FLOW.md](docs/AUTH_FLOW.md)。
+完整的认证流程说明请参考 [AUTH_FLOW.md](docs/AUTH_FLOW.md)，包含：
+- 用户注册（直接注册 / 验证码注册）
+- 用户登录
+- Token 刷新
+- 密码重置
+- 密码修改
 
 ### 部署指南
 
-生产环境部署指南请参考 [DEPLOYMENT.md](docs/DEPLOYMENT.md)。
+生产环境部署指南请参考 [DEPLOYMENT.md](docs/DEPLOYMENT.md)，包含：
+- Docker Compose 部署
+- Nginx 配置
+- SSL 证书配置
+- 监控和日志
+- 故障排查
+
+### API 配置说明
+
+详细的环境变量配置说明请参考 [API_CONFIG.md](docs/API_CONFIG.md)，包含：
+- LLM API 配置
+- FastAPI 基础配置
+- JWT 认证配置
+- 数据库配置
+- Redis 配置
+- 邮件配置
+- CORS 配置
+- 安全配置
+- 任务配置
+- 速率限制配置
+- 验证码配置
+
+### 错误码说明
+
+API 错误码完整说明请参考 [API_ERRORS.md](docs/API_ERRORS.md)，包含：
+- 错误码总览
+- 详细错误说明
+- 错误处理最佳实践
+- 常见错误处理模式
+
+### 系统架构
+
+完整的系统架构图请参考 [ARCHITECTURE.md](docs/ARCHITECTURE.md)，包含：
+- 整体架构图
+- 请求流程图（注册、登录、计划创建）
+- 分层架构说明
+- 数据库设计
+- 多智能体数据流
+- 部署架构
+- 安全架构
 
 ---
 
