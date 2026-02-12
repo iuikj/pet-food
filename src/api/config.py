@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # print(f"环境变量检查:{BASE_DIR}")
 # print(f"{BASE_DIR / ".env"}")
-# print(os.getenv("ZAI_API_KEY"))
+# print(os.getenv("ZAI_API_KEY"))   
 
 class Settings(BaseSettings):
     """FastAPI 应用配置类"""
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
 
     # ============ CORS 配置 ============
     cors_origins: List[str] = Field(
-        default=["http://localhost:3000", "http://localhost:8080"],
+        default=["http://localhost:3000","http://localhost:8080","capacitor://localhost","https://localhost","http://localhost","*"],
         description="允许的跨域来源"
     )
     cors_allow_credentials: bool = Field(default=True, description="允许携带凭证")
