@@ -11,6 +11,7 @@ from langgraph.prebuilt import ToolNode
 from langgraph.runtime import get_runtime
 from langgraph.types import Command
 
+from src.agent.stream_events import ProgressEventType, emit_progress
 from src.agent.sub_agent.state import SubAgentState
 from src.agent.tools import get_weather, query_note, tavily_search
 from src.agent.utils.context import Context
@@ -25,10 +26,16 @@ async def subagent_call_model(
     _, args = parse_tool_calling(last_ai_message, first_tool_call_only=True)
     task_name = cast(dict, args).get("content", "")
 
+    # 发送任务开始执行进度
+    emit_progress(
+        ProgressEventType.TASK_EXECUTING,
+        f"子智能体开始执行任务: {task_name}",
+        node="subagent",
+        task_name=task_name,
+    )
+
     # 预防模型多次调用网络搜索
     messages = state["temp_task_messages"] if "temp_task_messages" in state else []
-
-    # if len(messages) >0 and isinstance(messages[-1],ToolMessage) and
 
     model = load_chat_model(
         model=run_time.context.sub_model,
@@ -61,11 +68,36 @@ async def subagent_call_model(
     )
 
     if has_tool_calling(cast(AIMessage, response)):
+        tool_name, _ = parse_tool_calling(
+            cast(AIMessage, response), first_tool_call_only=True
+        )
+        # 根据工具类型发送对应进度事件
+        if tool_name == "tavily_search":
+            emit_progress(
+                ProgressEventType.TASK_SEARCHING,
+                "正在搜索相关信息...",
+                node="subagent",
+                task_name=task_name,
+            )
+        elif tool_name == "query_note":
+            emit_progress(
+                ProgressEventType.TASK_QUERYING_NOTE,
+                "正在查询历史笔记...",
+                node="subagent",
+                task_name=task_name,
+            )
         return Command(
             goto="sub_tools",
             update={"temp_task_messages": [response]},
         )
 
+    # 任务执行完成（无工具调用，返回最终结果）
+    emit_progress(
+        ProgressEventType.TASK_COMPLETED,
+        f"任务执行完成: {task_name}",
+        node="subagent",
+        task_name=task_name,
+    )
     return Command(
         goto="__end__",
         update={

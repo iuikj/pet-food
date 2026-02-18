@@ -6,6 +6,11 @@
 
 ## 变更记录 (Changelog)
 
+### 2025-02-18
+- 新增 `stream_events.py` 模块：ProgressEventType 枚举 + ProgressEvent 模型 + emit_progress 辅助函数
+- 所有 agent 节点（call_model、subagent_call_model、write、summary、structure_report、gather）添加结构化进度事件输出
+- 使用 LangGraph `get_stream_writer()` API 实现业务级流式进度反馈
+
 ### 2025-01-29
 - 初始化 Agent 模块文档
 - 完成多智能体架构分析
@@ -35,6 +40,7 @@ src/agent/
 ├── state.py              # 状态定义（StateInput, State, StateOutput）
 ├── node.py               # 主节点实现（call_model, gather, tool_node）
 ├── tools.py              # 工具定义（9个工具函数）
+├── stream_events.py      # 流式进度事件（ProgressEventType, ProgressEvent, emit_progress）
 ├── prompts/              # 提示词模块
 │   ├── __init__.py
 │   └── prompt.py         # 5个核心提示词
@@ -324,6 +330,82 @@ write_note = create_write_note_tool(
     message_key="temp_write_note_messages"  # 使用独立的消息键
 )
 ```
+
+---
+
+## 流式进度事件系统
+
+### 概述
+
+**文件**: `stream_events.py`
+
+Agent 模块通过 LangGraph 的 `get_stream_writer()` API 发送结构化的业务级进度事件，前端可通过 SSE 直接消费展示任务进度。
+
+### 核心组件
+
+| 组件 | 类型 | 说明 |
+|------|------|------|
+| `ProgressEventType` | str 枚举 | 19 种事件类型，覆盖全部 agent 生命周期 |
+| `ProgressEvent` | Pydantic BaseModel | 结构化进度消息，含 type、message、progress 等字段 |
+| `emit_progress()` | 辅助函数 | 封装 get_stream_writer()，非流式模式下静默忽略 |
+
+### 事件类型枚举
+
+| 事件类型 | 值 | 发送节点 | 含义 |
+|---------|-----|---------|------|
+| `PLAN_CREATING` | plan_creating | call_model | 正在分析宠物信息，制定任务计划 |
+| `PLAN_CREATED` | plan_created | call_model | 任务计划已创建 |
+| `PLAN_UPDATED` | plan_updated | call_model | 任务计划状态已更新 |
+| `TASK_DELEGATING` | task_delegating | call_model | 正在委派任务给子智能体 |
+| `TASK_EXECUTING` | task_executing | subagent | 子智能体开始执行任务 |
+| `TASK_SEARCHING` | task_searching | subagent | 子智能体正在搜索信息 |
+| `TASK_QUERYING_NOTE` | task_querying_note | subagent | 子智能体正在查询历史笔记 |
+| `TASK_COMPLETED` | task_completed | subagent | 子智能体任务执行完成 |
+| `NOTE_SAVING` | note_saving | write_note | 正在保存任务笔记 |
+| `NOTE_SAVED` | note_saved | write_note | 笔记保存完成 |
+| `SUMMARY_GENERATING` | summary_generating | write_note | 正在生成任务摘要 |
+| `SUMMARY_GENERATED` | summary_generated | write_note | 任务摘要生成完成 |
+| `STRUCTURING` | structuring | structure_report | 正在解析饮食计划为结构化数据 |
+| `STRUCTURING_RETRY` | structuring_retry | structure_report | 结构化解析失败，正在重试 |
+| `STRUCTURED` | structured | structure_report | 饮食计划解析完成 |
+| `GATHERING` | gathering | call_model | 所有任务完成，进入汇总阶段 |
+| `COMPLETED` | completed | gather | 月度饮食计划全部生成完成 |
+| `ERROR` | error | 通用 | 错误 |
+| `INFO` | info | 通用 | 信息 |
+
+### 使用方式
+
+```python
+from src.agent.stream_events import ProgressEventType, emit_progress
+
+# 在任意 agent 节点中调用
+emit_progress(
+    ProgressEventType.TASK_DELEGATING,
+    "正在委派任务: 收集营养需求",
+    node="call_model",
+    task_name="收集营养需求",
+    progress=15,
+)
+```
+
+### 关键设计决策
+
+1. **try-except 静默模式**: `emit_progress` 内部捕获所有异常。通过 `ainvoke`（非流式后台任务）调用时，`get_stream_writer()` 不可用，函数静默跳过而不崩溃。这确保了所有 agent 节点代码在流式和非流式两种调用方式下都能正常工作。
+
+2. **子图事件自动冒泡**: subagent、write_agent 等子图中通过 `get_stream_writer()` 发送的 custom 数据，会**自动传递到顶层** `graph.astream(stream_mode=["custom", "updates"])` 的消费者。无需额外处理。
+
+3. **进度百分比映射策略**: `_estimate_progress(state)` 根据 plan 的完成比例映射到 10-80% 区间，结构化阶段占 80-100%。
+
+### 与 API 层的集成
+
+**文件**: `src/api/utils/stream.py`
+
+API 层使用 `graph.astream(stream_mode=["custom", "updates"])` 替代原来的 `astream_events(version="v2")`：
+
+- `custom` 模式: 接收各节点的 ProgressEvent（业务级进度）
+- `updates` 模式: 接收每个节点的状态更新（用于累积最终结果）
+
+通过传入可变 `final_output` dict 在流式执行过程中同步收集最终状态，**避免流式结束后再调用 `ainvoke` 导致图被执行两次**。
 
 ---
 

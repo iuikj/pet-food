@@ -74,6 +74,9 @@ class PlanService:
         """
         执行饮食计划生成（流式模式）
 
+        通过 astream(stream_mode=["custom", "updates"]) 一次性执行图，
+        同时通过 final_output 收集最终状态用于持久化，避免二次调用 ainvoke。
+
         Args:
             user_id: 用户 ID
             pet_info: 宠物信息
@@ -111,22 +114,21 @@ class PlanService:
                 "pet_information": pet_info
             }
 
-            # 流式执行
-            async for event in stream_langgraph_execution(graph, inputs, config):
+            # 流式执行 —— 通过 final_output 收集累积状态
+            final_output: Dict[str, Any] = {}
+            async for event in stream_langgraph_execution(graph, inputs, config, final_output):
                 # 更新任务进度
                 await self._update_task_progress_from_event(task.id, event)
 
                 # 发送事件到客户端
                 yield event
 
-            # 执行完成，获取最终状态
-            final_state = await graph.ainvoke(inputs, config)
-
+            # 流式执行完毕，final_output 中已累积最终状态（无需再调用 ainvoke）
             # 保存结果
-            await self.task_service.complete_task(task.id, final_state)
+            await self.task_service.complete_task(task.id, final_output)
 
             # 保存到数据库
-            await self._save_diet_plan(user_id, task.id, pet_info, final_state)
+            await self._save_diet_plan(user_id, task.id, pet_info, final_output)
 
             # 发送完成事件
             yield f"data: {json.dumps({'type': 'task_completed', 'task_id': task.id})}\n\n"
@@ -415,7 +417,11 @@ class PlanService:
         event: str
     ):
         """
-        从事件更新任务进度
+        从 ProgressEvent SSE 事件更新任务进度
+
+        支持两种事件来源：
+        - custom 模式的 ProgressEvent（含 progress 字段）
+        - updates 模式的 node_completed 事件
 
         Args:
             task_id: 任务 ID
@@ -426,27 +432,19 @@ class PlanService:
         try:
             # 解析事件
             if event.startswith("data: "):
-                json_str = event[6:]  # 去掉 "data: " 前缀
+                json_str = event[6:].strip()
                 data = json.loads(json_str)
 
-                event_type = data.get("type")
+                event_type = data.get("type", "")
                 node = data.get("node", "")
+                progress = data.get("progress")
 
-                # 根据事件类型更新进度
-                if event_type == "node_started":
-                    if node == "main_agent":
-                        progress = 10
-                    elif node == "subagent":
-                        progress = 30
-                    elif node == "writeagent":
-                        progress = 70
-                    elif node == "structureagent":
-                        progress = 90
-
+                # 优先使用 ProgressEvent 中的 progress 字段
+                if progress is not None:
                     await self.task_service.update_task_progress(
                         task_id,
                         progress,
-                        node
+                        node or event_type
                     )
 
         except (json.JSONDecodeError, KeyError):
