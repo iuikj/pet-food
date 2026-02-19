@@ -1,9 +1,7 @@
-import operator
 from typing import Annotated
 
-from src.agent.entity.note import Note
-from src.agent.state import State
-from src.agent.utils.struct import PetDietPlan, WeeklyDietPlan
+from src.agent.v0.entity.note import Note
+from src.agent.v0.state import State
 
 
 class StructState(State):

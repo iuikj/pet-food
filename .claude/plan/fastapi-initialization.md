@@ -844,7 +844,7 @@ GET /api/v1/health/detail
 
 ```python
 from pydantic import BaseModel, EmailStr, Field
-from src.agent.utils.struct import PetInformation
+from src.agent.v0.utils import PetInformation
 
 
 class RegisterRequest(BaseModel):
@@ -1269,15 +1269,15 @@ import json
 import asyncio
 from logging import getLogger
 
-from src.agent.graph import build_graph_with_langgraph_studio
+from src.agent.v0.graph import build_graph_with_langgraph_studio
 from src.api.models.request import CreatePlanRequest
 
 logger = getLogger(__name__)
 
 
 async def execute_plan_stream(
-    user_id: str,
-    request: CreatePlanRequest
+        user_id: str,
+        request: CreatePlanRequest
 ) -> AsyncGenerator[str, None]:
     """
     执行饮食计划生成并流式输出
@@ -1361,8 +1361,8 @@ def _format_sse(data: dict) -> str:
 
 
 async def execute_plan_sync(
-    user_id: str,
-    request: CreatePlanRequest
+        user_id: str,
+        request: CreatePlanRequest
 ) -> dict:
     """
     同步执行饮食计划生成
@@ -1404,7 +1404,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from src.agent.graph import build_graph_with_langgraph_studio
+from src.agent.v0.graph import build_graph_with_langgraph_studio
 from src.db.models import TaskModel, DietPlanModel
 from src.api.models.request import CreatePlanRequest
 from src.api.utils.stream import execute_plan_stream, execute_plan_sync
@@ -1419,9 +1419,9 @@ class PlanService:
         self.graph = build_graph_with_langgraph_studio()
 
     async def create_plan(
-        self,
-        user_id: str,
-        request: CreatePlanRequest
+            self,
+            user_id: str,
+            request: CreatePlanRequest
     ) -> dict:
         """
         创建饮食计划
@@ -1521,11 +1521,11 @@ class PlanService:
         }
 
     async def list_plans(
-        self,
-        user_id: str,
-        page: int = 1,
-        page_size: int = 10,
-        status: Optional[str] = None
+            self,
+            user_id: str,
+            page: int = 1,
+            page_size: int = 10,
+            status: Optional[str] = None
     ) -> dict:
         """查询饮食计划列表"""
         query = select(TaskModel).where(TaskModel.user_id == user_id)

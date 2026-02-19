@@ -1,23 +1,14 @@
-from typing import Literal, cast
+from typing import Literal
 
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
-from langchain_dev_utils import has_tool_calling, load_chat_model, parse_tool_calling
-from langgraph.prebuilt import ToolNode
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_dev_utils import load_chat_model
 from langgraph.runtime import get_runtime
-from langgraph.types import Command, Send
+from langgraph.types import Command
 
-from src.agent.entity.note import Note
-from src.agent.state import State
-from src.agent.structrue_agent.state import StructState
-from src.agent.tools import (
-    ls,
-    query_note,
-    transfor_task_to_subagent,
-    update_plan,
-    write_plan,
-)
-from src.agent.utils.context import Context
-from src.agent.utils.struct import WeeklyDietPlan, PetDietPlan, MonthlyDietPlan
+from src.agent.v0.stream_events import ProgressEventType, emit_progress
+from src.agent.v0.structrue_agent.state import StructState
+from src.agent.v0.utils.context import Context
+from src.agent.v0.utils.struct import WeeklyDietPlan
 
 
 async def structure_report(state: StructState)-> Command[Literal["__end__","structure_report"]]:
@@ -40,7 +31,14 @@ async def structure_report(state: StructState)-> Command[Literal["__end__","stru
             return Command(
                 goto="__end__"
             )
-        if state.get("failed_reason"):
+
+        is_retry = bool(state.get("failed_reason"))
+        if is_retry:
+            emit_progress(
+                ProgressEventType.STRUCTURING_RETRY,
+                "结构化解析失败，正在重试...",
+                node="structure_report",
+            )
             response = await structure_model.ainvoke(
                 [
                     SystemMessage(content=run_time.context.report_prompt),
@@ -48,6 +46,11 @@ async def structure_report(state: StructState)-> Command[Literal["__end__","stru
                 ]
             )
         else:
+            emit_progress(
+                ProgressEventType.STRUCTURING,
+                "正在解析饮食计划为结构化数据...",
+                node="structure_report",
+            )
             response = await structure_model.ainvoke(
                 [
                     SystemMessage(content=run_time.context.report_prompt),
@@ -55,10 +58,19 @@ async def structure_report(state: StructState)-> Command[Literal["__end__","stru
                 ]
             )
         if response.get("parsed"):
+            parsed_plan: WeeklyDietPlan = response.get("parsed")
+            week_num = getattr(parsed_plan, "oder", None)
+            emit_progress(
+                ProgressEventType.STRUCTURED,
+                f"第{week_num}周饮食计划解析完成" if week_num else "饮食计划解析完成",
+                node="structure_report",
+                detail={"week": week_num},
+                progress=85,
+            )
             return Command(
                 goto="__end__",
                 update={
-                    "weekly_diet_plans": [response.get("parsed")],
+                    "weekly_diet_plans": [parsed_plan],
                 })
         else:
             return Command(

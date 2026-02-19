@@ -1,7 +1,7 @@
 from langgraph.graph import StateGraph
 
-from src.agent.structrue_agent.node import structure_report
-from src.agent.structrue_agent.state import StructState
+from src.agent.v0.structrue_agent.node import structure_report
+from src.agent.v0.structrue_agent.state import StructState
 
 
 def build_structure_agent():
