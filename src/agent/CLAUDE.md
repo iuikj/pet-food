@@ -376,15 +376,15 @@ Agent 模块通过 LangGraph 的 `get_stream_writer()` API 发送结构化的业
 ### 使用方式
 
 ```python
-from src.agent.stream_events import ProgressEventType, emit_progress
+from src.agent.v0.stream_events import ProgressEventType, emit_progress
 
 # 在任意 agent 节点中调用
 emit_progress(
-    ProgressEventType.TASK_DELEGATING,
-    "正在委派任务: 收集营养需求",
-    node="call_model",
-    task_name="收集营养需求",
-    progress=15,
+   ProgressEventType.TASK_DELEGATING,
+   "正在委派任务: 收集营养需求",
+   node="call_model",
+   task_name="收集营养需求",
+   progress=15,
 )
 ```
 

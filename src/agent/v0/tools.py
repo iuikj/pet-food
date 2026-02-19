@@ -2,7 +2,7 @@ from typing import Annotated
 
 from langchain_core.tools import tool
 from langchain_tavily.tavily_search import TavilySearch
-from src.agent.entity.note import (
+from src.agent.v0.entity.note import (
     create_write_note_tool,
     create_ls_tool,
     create_query_note_tool,

@@ -8,7 +8,6 @@ from typing import Dict, Any, Optional, AsyncGenerator
 
 from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
 from src.db.session import AsyncSessionLocal
 from datetime import datetime, timezone
 import uuid
@@ -17,7 +16,7 @@ from src.api.services.task_service import TaskService
 from src.api.services.pet_service import PetService
 from src.api.utils.errors import TaskException
 from src.api.utils.stream import stream_langgraph_execution
-from src.agent.graph import build_graph_with_langgraph_studio
+from src.agent.v0.graph import build_graph_with_langgraph_studio
 
 
 class PlanService:
@@ -399,7 +398,7 @@ class PlanService:
         """
         try:
             # 导入图构建函数
-            from src.agent.graph import build_graph_with_langgraph_studio
+            from src.agent.v0.graph import build_graph_with_langgraph_studio
 
             # 获取图
             graph = build_graph_with_langgraph_studio()

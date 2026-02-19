@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Annotated
 
-from src.agent.prompts.prompt import (
+from src.agent.v0.prompts.prompt import (
     SUBAGENT_PROMPT,
     SUMMARY_PROMPT,
     PLAN_MODEL_PROMPT,
