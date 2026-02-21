@@ -41,6 +41,21 @@ class ProgressEventType(str, Enum):
     GATHERING = "gathering"
     COMPLETED = "completed"
 
+    # ── V1 架构: 研究阶段 ──
+    RESEARCH_STARTING = "research_starting"
+    RESEARCH_TASK_DELEGATING = "research_task_delegating"
+    RESEARCH_FINALIZING = "research_finalizing"
+
+    # ── V1 架构: 分发阶段 ──
+    DISPATCHING = "dispatching"
+
+    # ── V1 架构: 周计划并行阶段 ──
+    WEEK_PLANNING = "week_planning"
+    WEEK_SEARCHING = "week_searching"
+    WEEK_PLAN_READY = "week_plan_ready"
+    WEEK_WRITING = "week_writing"
+    WEEK_COMPLETED = "week_completed"
+
     # 通用
     ERROR = "error"
     INFO = "info"

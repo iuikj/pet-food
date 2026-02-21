@@ -17,6 +17,7 @@ from src.api.services.pet_service import PetService
 from src.api.utils.errors import TaskException
 from src.api.utils.stream import stream_langgraph_execution
 from src.agent.v0.graph import build_graph_with_langgraph_studio
+from src.agent.v1.graph import build_v1_graph
 
 
 class PlanService:
@@ -27,14 +28,17 @@ class PlanService:
         self.task_service = TaskService(db)
         self.pet_service = PetService(db)
 
-    async def _get_langgraph(self)->CompiledStateGraph:
+    async def _get_langgraph(self, version: str = "v0") -> CompiledStateGraph:
+        if version == "v1":
+            return await build_v1_graph()
         return await build_graph_with_langgraph_studio()
 
     async def create_diet_plan(
         self,
         user_id: str,
         pet_info: Dict[str, Any],
-        stream: bool = False
+        stream: bool = False,
+        version: str = "v0",
     ) -> Dict[str, Any]:
         """
         创建饮食计划（同步模式）
@@ -56,7 +60,7 @@ class PlanService:
 
         # 在后台异步执行任务
         asyncio.create_task(
-            self._execute_task_async(task.id, pet_info)
+            self._execute_task_async(task.id, pet_info, version)
         )
 
         return {
@@ -68,7 +72,8 @@ class PlanService:
     async def execute_diet_plan_stream(
         self,
         user_id: str,
-        pet_info: Dict[str, Any]
+        pet_info: Dict[str, Any],
+        version: str = "v0",
     ) -> AsyncGenerator[str, None]:
         """
         执行饮食计划生成（流式模式）
@@ -95,7 +100,7 @@ class PlanService:
 
         try:
             # 获取 LangGraph 图
-            graph = await self._get_langgraph()
+            graph = await self._get_langgraph(version)
 
             # 配置（使用 thread_id 隔离会话）
             config = {
@@ -333,7 +338,7 @@ class PlanService:
         #     await asyncio.sleep(0.5)  # 每 0.5 秒检查一次
         pass
 
-    async def _execute_task_async(self, task_id: str, pet_info: Dict[str, Any]):
+    async def _execute_task_async(self, task_id: str, pet_info: Dict[str, Any], version: str = "v0"):
         """
         异步执行任务（后台任务）
 
@@ -350,7 +355,7 @@ class PlanService:
 
             try:
                 # 获取 LangGraph 图
-                graph = await self._get_langgraph()
+                graph = await self._get_langgraph(version)
 
                 # 配置
                 config = {
@@ -385,30 +390,6 @@ class PlanService:
             except Exception as e:
                 # 失败任务
                 await task_service.fail_task(task_id, str(e))
-
-    async def _get_langgraph(self):
-        """
-        获取 LangGraph 图实例
-
-        Returns:
-            编译后的 LangGraph 图
-
-        Raises:
-            TaskException: 图加载失败
-        """
-        try:
-            # 导入图构建函数
-            from src.agent.v0.graph import build_graph_with_langgraph_studio
-
-            # 获取图
-            graph = build_graph_with_langgraph_studio()
-
-            return graph
-
-        except ImportError as e:
-            raise TaskException(f"LangGraph 图导入失败: {str(e)}")
-        except Exception as e:
-            raise TaskException(f"LangGraph 图加载失败: {str(e)}")
 
     async def _update_task_progress_from_event(
         self,
