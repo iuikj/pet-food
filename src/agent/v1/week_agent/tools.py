@@ -47,7 +47,11 @@ def create_query_shared_note_tool() -> BaseTool:
 
 
 def create_week_write_note_tool() -> BaseTool:
-    """创建周 Agent 专用的笔记写入工具"""
+    """创建周 Agent 专用的笔记写入工具
+
+    关键设计：直接写入 `note`（输出 channel），而非中间的 `week_note`。
+    这确保了 note 一定会通过 WeekAgentOutput 回传到父图。
+    """
     try:
         from langchain.agents.tool_node import InjectedState  # type: ignore
     except ImportError:
@@ -68,13 +72,15 @@ def create_week_write_note_tool() -> BaseTool:
         file_name: Annotated[str, "笔记名称"],
         content: Annotated[str, "笔记内容"],
         tool_call_id: Annotated[str, InjectedToolCallId],
-        state: Annotated[WeekAgentState, InjectedState],
+        # state: Annotated[WeekAgentState, InjectedState],
     ):
         # 周计划笔记固定为 diet_plan 类型
         note = Note(content=content, type="diet_plan")
+        # 直接写入 `note`（WeekAgentOutput 的输出 key），
+        # 而非中间的 `week_note`，确保输出链路不断
         return Command(
             update={
-                "week_note": {file_name: note},
+                "note": {file_name: note},
                 "week_write_messages": [
                     ToolMessage(
                         content=f"笔记 '{file_name}' 写入成功",

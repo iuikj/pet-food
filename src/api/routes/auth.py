@@ -3,8 +3,9 @@
 处理用户注册、登录、Token 刷新、获取用户信息等请求
 """
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,8 +26,8 @@ from src.api.models.response import (
 from src.api.services.auth_service import AuthService
 from src.api.utils.errors import to_http_exception, APIException
 
-# 导入认证中间件的 get_current_user 函数
-from src.api.middleware.auth import get_current_user
+# 导入认证中间件
+from src.api.middleware.auth import get_current_user, get_current_active_user
 
 router = APIRouter()
 
@@ -159,8 +160,8 @@ async def refresh_token(
 
 
 @router.get("/me", response_model=ApiResponse[UserResponse], summary="获取当前用户信息")
-async def get_current_user(
-    current_user_id: str = Depends(get_current_user),
+async def get_me(
+    current_user_id: str = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -197,7 +198,7 @@ async def get_current_user(
 @router.put("/profile", response_model=ApiResponse[UserProfileResponse], summary="更新用户信息")
 async def update_profile(
     request: UpdateProfileRequest,
-    current_user_id: str = Depends(get_current_user),
+    current_user_id: str = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -260,7 +261,7 @@ async def update_profile(
 @router.post("/avatar", response_model=ApiResponse[AvatarUploadResponse], summary="上传用户头像")
 async def upload_avatar(
     file: UploadFile = File(..., description="头像文件"),
-    current_user_id: str = Depends(get_current_user),
+    current_user_id: str = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -303,9 +304,12 @@ async def upload_avatar(
         upload_dir = "uploads/avatars/users"
         os.makedirs(upload_dir, exist_ok=True)
 
-        # 生成文件名
-        file_ext = os.path.splitext(file.filename)[1]
-        filename = f"{current_user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}{file_ext}"
+        # 安全生成文件名：使用 uuid4 避免路径注入，白名单扩展名
+        allowed_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+        file_ext = os.path.splitext(file.filename or "")[1].lower()
+        if file_ext not in allowed_extensions:
+            file_ext = ".jpg"  # 默认扩展名
+        filename = f"{uuid4().hex}{file_ext}"
         file_path = os.path.join(upload_dir, filename)
 
         # 保存文件
@@ -342,7 +346,7 @@ async def upload_avatar(
 
 @router.get("/subscription", response_model=ApiResponse[dict], summary="获取订阅状态")
 async def get_subscription(
-    current_user_id: str = Depends(get_current_user),
+    current_user_id: str = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -358,9 +362,14 @@ async def get_subscription(
         user = await auth_service.get_user_by_id(current_user_id)
 
         # 计算订阅状态
+        now = datetime.now(timezone.utc)
         is_expired = False
+        days_remaining = None
+
         if user.subscription_expired_at:
-            is_expired = user.subscription_expired_at < datetime.utcnow()
+            is_expired = user.subscription_expired_at < now
+            if not is_expired:
+                days_remaining = max(0, (user.subscription_expired_at - now).days)
 
         return ApiResponse(
             code=0,
@@ -370,24 +379,9 @@ async def get_subscription(
                 "plan_type": user.plan_type,
                 "subscription_expired_at": user.subscription_expired_at,
                 "is_expired": is_expired,
-                "days_remaining": None
+                "days_remaining": days_remaining
             }
         )
-
-        # 如果有订阅过期时间，计算剩余天数
-        if user.subscription_expired_at and not is_expired:
-            days_remaining = (user.subscription_expired_at - datetime.utcnow()).days
-            return ApiResponse(
-                code=0,
-                message="获取成功",
-                data={
-                    "is_pro": user.is_pro or False,
-                    "plan_type": user.plan_type,
-                    "subscription_expired_at": user.subscription_expired_at,
-                    "is_expired": is_expired,
-                    "days_remaining": max(0, days_remaining)
-                }
-            )
 
     except Exception as e:
         raise HTTPException(

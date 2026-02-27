@@ -18,6 +18,8 @@ from src.api.utils.errors import TaskException
 from src.api.utils.stream import stream_langgraph_execution
 from src.agent.v0.graph import build_graph_with_langgraph_studio
 from src.agent.v1.graph import build_v1_graph
+from src.agent.v1.utils.context import ContextV1
+from src.utils.strtuct import PetInformation
 
 
 class PlanService:
@@ -73,7 +75,7 @@ class PlanService:
         self,
         user_id: str,
         pet_info: Dict[str, Any],
-        version: str = "v0",
+        version: str = "v1",
     ) -> AsyncGenerator[str, None]:
         """
         执行饮食计划生成（流式模式）
@@ -83,7 +85,8 @@ class PlanService:
 
         Args:
             user_id: 用户 ID
-            pet_info: 宠物信息
+            pet_info: 宠物信息字典（字段需匹配 PetInformation 模型）
+            version: 图版本，默认 "v1"
 
         Yields:
             SSE 格式的事件字符串
@@ -113,14 +116,26 @@ class PlanService:
             # 更新任务状态为运行中
             await self.task_service.update_task_status(task.id, "running")
 
-            # 构造输入
-            inputs = {
-                "pet_information": pet_info
-            }
+            # 构造输入 — 根据版本适配
+            context = None
+            if version == "v1":
+                # V1: 构造 PetInformation Pydantic 模型，排除非 schema 字段
+                pet_info_filtered = {
+                    k: v for k, v in pet_info.items()
+                    if k in PetInformation.model_fields
+                }
+                pet_information = PetInformation(**pet_info_filtered)
+                inputs = {"pet_information": pet_information}
+                context = ContextV1()
+            else:
+                # V0: 原有 dict 格式
+                inputs = {"pet_information": pet_info}
 
             # 流式执行 —— 通过 final_output 收集累积状态
             final_output: Dict[str, Any] = {}
-            async for event in stream_langgraph_execution(graph, inputs, config, final_output):
+            async for event in stream_langgraph_execution(
+                graph, inputs, config, final_output, context=context
+            ):
                 # 更新任务进度
                 await self._update_task_progress_from_event(task.id, event)
 
@@ -338,7 +353,7 @@ class PlanService:
         #     await asyncio.sleep(0.5)  # 每 0.5 秒检查一次
         pass
 
-    async def _execute_task_async(self, task_id: str, pet_info: Dict[str, Any], version: str = "v0"):
+    async def _execute_task_async(self, task_id: str, pet_info: Dict[str, Any], version: str = "v1"):
         """
         异步执行任务（后台任务）
 
@@ -348,6 +363,7 @@ class PlanService:
         Args:
             task_id: 任务 ID
             pet_info: 宠物信息
+            version: 图版本，默认 "v1"
         """
         # 为后台任务创建独立的 session（避免与请求的 session 冲突）
         async with AsyncSessionLocal() as db:
@@ -367,13 +383,19 @@ class PlanService:
                 # 更新任务状态
                 await task_service.update_task_status(task_id, "running")
 
-                # 构造输入
-                inputs = {
-                    "pet_information": pet_info
-                }
-
-                # 执行图
-                result = await graph.ainvoke(inputs, config)
+                # 构造输入 — 根据版本适配
+                if version == "v1":
+                    pet_info_filtered = {
+                        k: v for k, v in pet_info.items()
+                        if k in PetInformation.model_fields
+                    }
+                    pet_information = PetInformation(**pet_info_filtered)
+                    inputs = {"pet_information": pet_information}
+                    # V1: ainvoke 需要 context 参数
+                    result = await graph.ainvoke(inputs, config, context=ContextV1())
+                else:
+                    inputs = {"pet_information": pet_info}
+                    result = await graph.ainvoke(inputs, config)
 
                 # 完成任务
                 completed_task = await task_service.complete_task(task_id, result)
@@ -456,6 +478,9 @@ class PlanService:
 
         # 提取报告数据
         report = result.get("report", {})
+        # 处理 report 可能是 Pydantic 对象的情况
+        if hasattr(report, "model_dump"):
+            report = report.model_dump()
 
         # 提取 pet_id（如果存在）
         pet_id = pet_info.get("pet_id")
@@ -465,10 +490,10 @@ class PlanService:
             id=str(uuid.uuid4()),
             user_id=user_id,
             task_id=task_id,
-            pet_id=pet_id,  # 新增：关联宠物
+            pet_id=pet_id,  # 关联宠物
             pet_type=pet_info.get("pet_type", "unknown"),
             pet_breed=pet_info.get("pet_breed"),
-            pet_age=pet_info.get("pet_age_months", 0),
+            pet_age=pet_info.get("pet_age", 0),
             pet_weight=pet_info.get("pet_weight", 0),
             health_status=pet_info.get("health_status"),
             plan_data=report,

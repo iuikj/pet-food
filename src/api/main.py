@@ -66,26 +66,27 @@ async def lifespan(app: FastAPI):
     print("所有连接已关闭")
 
 
-# 创建 FastAPI 应用
+# 创建 FastAPI 应用（生产环境禁用 API 文档）
 app = FastAPI(
     title="宠物饮食计划智能助手 API",
     description="基于 LangGraph 多智能体系统的宠物饮食计划生成服务",
     version="1.0.0",
-    docs_url="/docs",  # Swagger UI
-    redoc_url="/redoc",  # ReDoc
-    openapi_url="/openapi.json",
+    docs_url="/docs" if settings.is_dev else None,
+    redoc_url="/redoc" if settings.is_dev else None,
+    openapi_url="/openapi.json" if settings.is_dev else None,
     lifespan=lifespan,
     debug=settings.is_dev
 )
 
 
-# 配置 CORS
+# 配置 CORS — 开发环境允许所有来源
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=settings.cors_allow_credentials,
-    allow_methods=settings.cors_allow_methods,
-    allow_headers=settings.cors_allow_headers,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 

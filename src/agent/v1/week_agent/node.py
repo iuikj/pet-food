@@ -3,6 +3,7 @@ V1 周 Agent 节点实现
 
 week_planner: 循环搜索/查询笔记 → 生成周计划
 week_write: 将计划写入笔记
+week_finalize: 发送完成进度事件（note 已由 week_write_note 工具直接写入）
 """
 from typing import Literal, cast
 
@@ -173,24 +174,29 @@ async def week_write(state: WeekAgentState) -> Command[Literal["week_write_tool"
 
 
 async def week_finalize(state: WeekAgentState):
-    """周 Agent 完成节点：将 week_note 合并到主图的 note 中"""
+    """周 Agent 完成节点
+
+    note 已由 week_write_note 工具通过 Command 直接写入 state["note"]，
+    此节点仅负责发送进度事件。
+    """
     assignment: WeekAssignment = state["week_assignment"]
     week_num = assignment.week_number
-    week_note = state.get("week_note") or {}
+
+    # 验证 note 已写入
+    notes = state.get("note") or {}
+    note_count = len(notes)
 
     base_progress = 30 + week_num * 12
     emit_progress(
         ProgressEventType.WEEK_COMPLETED,
-        f"第{week_num}周: 饮食计划完成",
+        f"第{week_num}周: 饮食计划完成 (已保存 {note_count} 条笔记)",
         node=f"week_agent_{week_num}",
         task_name=f"第{week_num}周饮食计划",
         progress=min(base_progress, 78),
     )
 
-    # 将 week_note 合并到主图的 note 空间
-    return {
-        "note": week_note,
-    }
+    # 无需返回任何状态更新 — note 已在 week_write_note 工具中直接写入
+    return {}
 
 
 # ── 工具执行节点 ──

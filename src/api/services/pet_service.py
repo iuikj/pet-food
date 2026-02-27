@@ -285,9 +285,10 @@ class PetService:
             return None
 
         return {
+            "pet_id": pet.id,
             "pet_type": pet.type,
             "pet_breed": pet.breed,
-            "age": pet.age,
-            "pet_weight": pet.weight,
-            "pet_health_status": pet.health_status or "健康"
+            "pet_age": pet.age,
+            "pet_weight": float(pet.weight),
+            "health_status": pet.health_status or "健康"
         }

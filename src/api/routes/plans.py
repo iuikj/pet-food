@@ -67,16 +67,17 @@ async def create_diet_plan(
             pet_info = PetInformation(
                 pet_type=request.pet_type or "dog",
                 pet_breed=request.pet_breed,
-                age=request.pet_age or 12,
+                pet_age=request.pet_age or 12,
                 pet_weight=request.pet_weight or 10,
-                pet_health_status=request.health_status or "健康"
+                health_status=request.health_status or "健康"
             ).model_dump()
 
         # 创建任务（异步执行）
         result = await plan_service.create_diet_plan(
             user_id=current_user_id,
             pet_info=pet_info,
-            stream=False
+            stream=False,
+            version="v1"
         )
 
         return ApiResponse(
@@ -157,16 +158,17 @@ async def create_diet_plan_stream(
             pet_info = PetInformation(
                 pet_type=request.pet_type or "dog",
                 pet_breed=request.pet_breed,
-                age=request.pet_age or 12,
+                pet_age=request.pet_age or 12,
                 pet_weight=request.pet_weight or 10,
-                pet_health_status=request.health_status or "健康"
+                health_status=request.health_status or "健康"
             ).model_dump()
 
         # 创建流式响应
         return StreamingResponse(
             plan_service.execute_diet_plan_stream(
                 user_id=current_user_id,
-                pet_info=pet_info
+                pet_info=pet_info,
+                version="v1"
             ),
             media_type="text/event-stream",
             headers={

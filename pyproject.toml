@@ -1,7 +1,7 @@
 [project]
 name = "pet-food"
 version = "0.1.0"
-description = "Add your description here"
+description = "基于 LangGraph 多智能体系统的宠物饮食计划智能助手"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -35,10 +35,6 @@ dependencies = [
     "aiosmtplib>=3.0.2",
     # 邮箱验证
     "pydantic[email]>=2.11.9",
-    "pydantic[email]>=2.11.9",
-    "passlib>=1.7.4",
-    "optional>=0.0.1",
-    "ipykernel>=7.1.0",
 ]
 
 [dependency-groups]

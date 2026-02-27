@@ -19,6 +19,7 @@ from src.agent.v0.stream_events import ProgressEventType, emit_progress
 from src.agent.v0.utils.struct import PetDietPlan, MonthlyDietPlan
 from src.agent.v1.models import CoordinationGuide
 from src.agent.v1.state import StateV1
+from src.utils.strtuct import PetInformation
 from src.agent.v1.tools import (
     write_plan,
     update_plan,
@@ -264,7 +265,7 @@ async def collect_and_structure(state: StateV1) -> Command[Literal["structure_re
         node="collect_and_structure",
         progress=80,
     )
-
+    print(f"Gathering notes...{notes}")
     sends = [
         Send(
             node="structure_report",
@@ -296,9 +297,15 @@ async def gather(state: StateV1):
     messages = state.get("messages", [])
     ai_suggestions = messages[-1].content if messages else "饮食计划已生成，请查看详细报告。"
 
+    # pet_information 可能在图执行过程中被序列化为 JSON 字符串，需要反序列化
+    pet_info = state["pet_information"]
+    if isinstance(pet_info, str):
+        import json
+        pet_info = PetInformation(**json.loads(pet_info))
+
     return {
         "report": PetDietPlan(
-            pet_information=state["pet_information"],
+            pet_information=pet_info,
             pet_diet_plan=MonthlyDietPlan(monthly_diet_plan=weekly_plans),
             ai_suggestions=ai_suggestions,
         )

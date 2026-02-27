@@ -105,18 +105,18 @@ async def get_monthly_calendar(
 
                 # 判断状态
                 if completion_rate >= 80:
-                    status = "excellent"
+                    day_status = "excellent"
                 elif completion_rate >= 60:
-                    status = "good"
+                    day_status = "good"
                 elif completion_rate >= 40:
-                    status = "normal"
+                    day_status = "normal"
                 else:
-                    status = "poor"
+                    day_status = "poor"
             else:
                 total_meals = 0
                 completed_meals = 0
                 completion_rate = 0
-                status = "none"
+                day_status = "none"
 
             days_data.append(
                 CalendarDayResponse(
@@ -125,7 +125,7 @@ async def get_monthly_calendar(
                     completion_rate=int(completion_rate),
                     total_meals=total_meals,
                     completed_meals=completed_meals,
-                    status=status
+                    status=day_status
                 )
             )
 

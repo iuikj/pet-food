@@ -55,7 +55,13 @@ class Settings(BaseSettings):
 
     # ============ CORS 配置 ============
     cors_origins: List[str] = Field(
-        default=["http://localhost:3000","http://localhost:8080","capacitor://localhost","https://localhost","http://localhost","*"],
+        default=[
+            "http://localhost:3000",
+            "http://localhost:8080",
+            "capacitor://localhost",
+            "https://localhost",
+            "http://localhost",
+        ],
         description="允许的跨域来源"
     )
     cors_allow_credentials: bool = Field(default=True, description="允许携带凭证")

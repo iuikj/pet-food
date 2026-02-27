@@ -4,10 +4,13 @@ V1 周 Agent 子图构建
 __start__ → week_planner ←→ week_tools (循环搜索/查询)
                  ↓ 计划完成
            week_write → week_write_tool → week_finalize → __end__
+
+关键设计：通过 input=WeekAgentInput, output=WeekAgentOutput 控制边界，
+确保并行 Send 时不会将 pet_information 等只读字段回写到父图。
 """
 from langgraph.graph.state import StateGraph
 
-from src.agent.v1.week_agent.state import WeekAgentState
+from src.agent.v1.week_agent.state import WeekAgentState, WeekAgentInput, WeekAgentOutput
 from src.agent.v1.week_agent.node import (
     week_planner,
     week_write,
@@ -19,7 +22,11 @@ from src.agent.v1.week_agent.node import (
 
 def build_week_agent():
     """构建周 Agent 子图"""
-    graph = StateGraph(WeekAgentState)
+    graph = StateGraph(
+        WeekAgentState,
+        input=WeekAgentInput,
+        output=WeekAgentOutput,
+    )
 
     # 添加节点
     graph.add_node("week_planner", week_planner)
