@@ -1,22 +1,20 @@
 """
 饮食计划服务
-调用 LangGraph 多智能体系统生成宠物饮食计划
+调用 LangGraph V1 多智能体系统生成宠物饮食计划
 """
 import json
 import asyncio
-from typing import Dict, Any, Optional, AsyncGenerator
-
-from langgraph.graph.state import CompiledStateGraph
-from sqlalchemy.ext.asyncio import AsyncSession
-from src.db.session import AsyncSessionLocal
+from typing import Dict, Any, AsyncGenerator
 from datetime import datetime, timezone
 import uuid
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from langgraph.graph.state import CompiledStateGraph
+
+from src.db.session import AsyncSessionLocal
 from src.api.services.task_service import TaskService
 from src.api.services.pet_service import PetService
-from src.api.utils.errors import TaskException
-from src.api.utils.stream import stream_langgraph_execution
-from src.agent.v0.graph import build_graph_with_langgraph_studio
+from src.api.utils.stream import stream_langgraph_execution, create_sse_event
 from src.agent.v1.graph import build_v1_graph
 from src.agent.v1.utils.context import ContextV1
 from src.utils.strtuct import PetInformation
@@ -30,442 +28,330 @@ class PlanService:
         self.task_service = TaskService(db)
         self.pet_service = PetService(db)
 
-    async def _get_langgraph(self, version: str = "v0") -> CompiledStateGraph:
-        if version == "v1":
-            return await build_v1_graph()
-        return await build_graph_with_langgraph_studio()
+    # ──────────── 公共接口 ────────────
 
     async def create_diet_plan(
         self,
         user_id: str,
         pet_info: Dict[str, Any],
-        stream: bool = False,
-        version: str = "v0",
     ) -> Dict[str, Any]:
         """
-        创建饮食计划（同步模式）
+        创建饮食计划（异步后台模式）
+
+        创建任务后在后台执行，立即返回任务 ID 供轮询查询进度。
 
         Args:
             user_id: 用户 ID
             pet_info: 宠物信息
-            stream: 是否使用流式输出
 
         Returns:
-            任务信息
+            包含 task_id 和 status 的字典
         """
-        # 创建任务
         task = await self.task_service.create_task(
             user_id=user_id,
             task_type="diet_plan",
-            input_data=pet_info
+            input_data=pet_info,
         )
 
-        # 在后台异步执行任务
         asyncio.create_task(
-            self._execute_task_async(task.id, pet_info, version)
+            self._execute_task_async(task.id, pet_info)
         )
 
         return {
             "task_id": task.id,
             "status": task.status,
-            "message": "任务已创建，正在执行中"
+            "message": "任务已创建，正在执行中",
         }
 
     async def execute_diet_plan_stream(
         self,
         user_id: str,
         pet_info: Dict[str, Any],
-        version: str = "v1",
     ) -> AsyncGenerator[str, None]:
         """
         执行饮食计划生成（流式模式）
 
-        通过 astream(stream_mode=["custom", "updates"]) 一次性执行图，
-        同时通过 final_output 收集最终状态用于持久化，避免二次调用 ainvoke。
+        通过 astream(stream_mode=["custom", "updates"]) 执行图，
+        使用 final_output 收集最终状态用于持久化，避免二次 ainvoke。
 
         Args:
             user_id: 用户 ID
-            pet_info: 宠物信息字典（字段需匹配 PetInformation 模型）
-            version: 图版本，默认 "v1"
+            pet_info: 宠物信息字典
 
         Yields:
-            SSE 格式的事件字符串
+            SSE 格式事件字符串
         """
-        # 创建任务
         task = await self.task_service.create_task(
             user_id=user_id,
             task_type="diet_plan",
-            input_data=pet_info
+            input_data=pet_info,
         )
 
-        # 发送任务创建事件
-        yield f"data: {json.dumps({'type': 'task_created', 'task_id': task.id})}\n\n"
+        yield create_sse_event({"type": "task_created", "task_id": task.id})
 
         try:
-            # 获取 LangGraph 图
-            graph = await self._get_langgraph(version)
-
-            # 配置（使用 thread_id 隔离会话）
+            graph = await self._build_graph()
             config = {
                 "configurable": {
                     "thread_id": task.id,
-                    "user_id": user_id
+                    "user_id": user_id,
                 }
             }
 
-            # 更新任务状态为运行中
             await self.task_service.update_task_status(task.id, "running")
 
-            # 构造输入 — 根据版本适配
-            context = None
-            if version == "v1":
-                # V1: 构造 PetInformation Pydantic 模型，排除非 schema 字段
-                pet_info_filtered = {
-                    k: v for k, v in pet_info.items()
-                    if k in PetInformation.model_fields
-                }
-                pet_information = PetInformation(**pet_info_filtered)
-                inputs = {"pet_information": pet_information}
-                context = ContextV1()
-            else:
-                # V0: 原有 dict 格式
-                inputs = {"pet_information": pet_info}
+            inputs, context = self._prepare_inputs(pet_info)
 
             # 流式执行 —— 通过 final_output 收集累积状态
             final_output: Dict[str, Any] = {}
             async for event in stream_langgraph_execution(
                 graph, inputs, config, final_output, context=context
             ):
-                # 更新任务进度
                 await self._update_task_progress_from_event(task.id, event)
-
-                # 发送事件到客户端
                 yield event
 
-            # 流式执行完毕，final_output 中已累积最终状态（无需再调用 ainvoke）
-            # 保存结果
+            # 流式结束后持久化（无需再调用 ainvoke）
             await self.task_service.complete_task(task.id, final_output)
+            await self._save_diet_plan(
+                db=self.db,
+                user_id=user_id,
+                task_id=task.id,
+                pet_info=pet_info,
+                result=final_output,
+            )
 
-            # 保存到数据库
-            await self._save_diet_plan(user_id, task.id, pet_info, final_output)
-
-            # 发送完成事件
-            yield f"data: {json.dumps({'type': 'task_completed', 'task_id': task.id})}\n\n"
+            yield create_sse_event({"type": "task_completed", "task_id": task.id})
 
         except Exception as e:
-            # 任务失败
             await self.task_service.fail_task(task.id, str(e))
-
-            # 发送错误事件
-            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            yield create_sse_event({"type": "error", "error": str(e)})
 
     async def resume_diet_plan_stream(
         self,
         user_id: str,
-        task_id: str
-    ) -> AsyncGenerator[str, None]:
-        pass
-        # """
-        # 恢复流式连接（断线重连）
-        #
-        # 混合架构核心：支持断线后通过 task_id 重连，继续接收执行事件
-        #
-        # Args:
-        #     user_id: 用户 ID
-        #     task_id: 任务 ID
-        #
-        # Yields:
-        #     SSE 格式的事件字符串
-        # """
-        # try:
-        #     # 查询任务状态
-        #     task = await self.task_service.get_task(task_id, user_id)
-        #
-        #     # 检查任务所有权
-        #     if task.user_id != user_id:
-        #         yield f"data: {json.dumps({'type': 'error', 'error': '无权访问此任务'})}\n\n"
-        #         return
-        #
-        #     # 根据任务状态处理
-        #     if task.status == "completed":
-        #         # 任务已完成，返回结果
-        #         yield f"data: {json.dumps({{\n"
-        #         yield f'"type": "task_completed",\n'
-        #         yield f'"task_id": "{task.id}",\n'
-        #         yield f'"result": {json.dumps(task.output_data or {}, ensure_ascii=False)}\n'
-        #         yield f'}})}}\n\n'
-        #         return
-        #
-        #     elif task.status == "failed":
-        #         # 任务失败
-        #         yield f"data: {json.dumps({{\n"
-        #         yield f'"type": "error",\n'
-        #         yield f'"task_id": "{task.id}",\n'
-        #         yield f'"error": "{task.error_message or "任务执行失败"}"\n'
-        #         yield f'}})}}\n\n'
-        #         return
-        #
-        #     elif task.status == "cancelled":
-        #         # 任务已取消
-        #         yield f"data: {json.dumps({{\n"
-        #         yield f'"type": "error",\n'
-        #         yield f'"task_id": "{task.id}",\n'
-        #         yield f'"error": "任务已取消"\n'
-        #         yield f'}})}}\n\n"
-        #         return
-        #
-        #     elif task.status == "pending":
-        #         # 任务等待开始，发送状态后继续
-        #         yield f"data: {json.dumps({{\n"
-        #         yield f'"type": "resumed",\n'
-        #         yield f'"task_id": "{task.id}",\n'
-        #         yield f'"status": "pending",\n'
-        #         yield f'"progress": {task.progress},\n'
-        #         yield f'"current_node": "{task.current_node or ""}"\n'
-        #         yield f'}})}}\n\n"
-        #         # 等待任务开始，轮询状态
-        #         await self._wait_for_task_start(task_id, user_id)
-        #
-        #     elif task.status == "running":
-        #         # 任务正在运行，发送当前状态
-        #         yield f"data: {json.dumps({{\n"
-        #         yield f'"type": "resumed",\n'
-        #         yield f'"task_id": "{task.id}",\n'
-        #         yield f'"status": "running",\n'
-        #         yield f'"progress": {task.progress},\n'
-        #         yield f'"current_node": "{task.current_node or ""}"\n'
-        #         yield f'}})}}\n\n"
-        #
-        #         # 继续接收后续事件
-        #         # 注意：由于 LangGraph 已经在运行，这里我们只能轮询获取更新
-        #         async for event in self._stream_task_progress(task_id, user_id):
-        #             yield event
-        #
-        # except Exception as e:
-        #     yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-
-    async def _wait_for_task_start(
-        self,
         task_id: str,
-        user_id: str,
-        timeout: int = 60
-    ):
-        """
-        等待任务开始执行
-
-        Args:
-            task_id: 任务 ID
-            user_id: 用户 ID
-            timeout: 超时时间（秒）
-        """
-        import asyncio
-
-        start_time = asyncio.get_event_loop().time()
-        check_interval = 0.5  # 检查间隔（秒）
-
-        while True:
-            # 检查超时
-            if asyncio.get_event_loop().time() - start_time > timeout:
-                raise TaskException(f"等待任务开始超时（{timeout}秒）")
-
-            # 查询任务状态
-            task = await self.task_service.get_task(task_id, user_id)
-
-            if task.status == "running":
-                return
-            elif task.status in ["failed", "cancelled"]:
-                raise TaskException(f"任务已{task.status}")
-
-            # 等待下一次检查
-            await asyncio.sleep(check_interval)
-
-    async def _stream_task_progress(
-        self,
-        task_id: str,
-        user_id: str
     ) -> AsyncGenerator[str, None]:
         """
-        流式推送任务进度（用于重连后的进度更新）
+        恢复流式连接（断线重连）
+
+        查询任务当前状态：
+        - 已完成/失败/取消：直接返回结果
+        - 运行中/等待中：推送当前进度并轮询至终态
+
+        注意：当前架构下图执行与 SSE 生成器绑定，SSE 断开后图也会被取消。
+        因此 resume 主要用于客户端检查任务最终状态。
 
         Args:
-            task_id: 任务 ID
             user_id: 用户 ID
+            task_id: 任务 ID
 
         Yields:
-            SSE 格式的事件字符串
+            SSE 格式事件字符串
         """
-        # import asyncio
-        # from datetime import datetime, timezone
-        #
-        # last_status = None
-        # last_progress = None
-        # last_node = None
-        #
-        # while True:
-        #     # 查询最新任务状态
-        #     task = await self.task_service.get_task(task_id, user_id)
-        #
-        #     # 检查任务是否完成
-        #     if task.status == "completed":
-        #         yield f"data: {json.dumps({{\n"
-        #         yield f'"type": "task_completed",\n'
-        #         yield f'"task_id": "{task.id}",\n'
-        #         yield f'"result": {json.dumps(task.output_data or {}, ensure_ascii=False)}\n'
-        #         yield f'}})}}\n\n'
-        #         return
-        #
-        #     elif task.status == "failed":
-        #         yield f"data: {json.dumps({{\n"
-        #         yield f'"type": "error",\n'
-        #         yield f'"task_id": "{task.id}",\n'
-        #         yield f'"error": "{task.error_message or "任务执行失败"}"\n'
-        #         yield f'}})}}\n\n"
-        #         return
-        #
-        #     elif task.status == "cancelled":
-        #         yield f"data: {json.dumps({{\n"
-        #         yield f'"type": "error",\n'
-        #         yield f'"task_id": "{task.id}",\n'
-        #         yield f'"error": "任务已取消"\n'
-        #         yield f'}})}}\n\n"
-        #         return
-        #
-        #     # 检查是否有状态变化
-        #     status_changed = task.status != last_status
-        #     progress_changed = task.progress != last_progress
-        #     node_changed = task.current_node != last_node
-        #
-        #     if status_changed or progress_changed or node_changed:
-        #         yield f"data: {json.dumps({{\n"
-        #         yield f'"type": "progress_update",\n'
-        #         yield f'"task_id": "{task.id}",\n'
-        #         yield f'"status": "{task.status}",\n'
-        #         yield f'"progress": {task.progress},\n'
-        #         yield f'"current_node": "{task.current_node or ""}",\n'
-        #         yield f'"timestamp": "{datetime.now(timezone.utc).isoformat()}Z"\n'
-        #         yield f'}})}}\n\n"
-        #
-        #         last_status = task.status
-        #         last_progress = task.progress
-        #         last_node = task.current_node
-        #
-        #     # 等待下一次检查
-        #     await asyncio.sleep(0.5)  # 每 0.5 秒检查一次
-        pass
+        try:
+            task = await self.task_service.get_task(task_id, user_id)
 
-    async def _execute_task_async(self, task_id: str, pet_info: Dict[str, Any], version: str = "v1"):
+            if task.status == "completed":
+                yield create_sse_event({
+                    "type": "task_completed",
+                    "task_id": task.id,
+                    "result": task.output_data or {},
+                })
+                return
+
+            if task.status == "failed":
+                yield create_sse_event({
+                    "type": "error",
+                    "task_id": task.id,
+                    "error": task.error_message or "任务执行失败",
+                })
+                return
+
+            if task.status == "cancelled":
+                yield create_sse_event({
+                    "type": "error",
+                    "task_id": task.id,
+                    "error": "任务已取消",
+                })
+                return
+
+            # running 或 pending：推送当前进度并轮询至终态
+            yield create_sse_event({
+                "type": "resumed",
+                "task_id": task.id,
+                "status": task.status,
+                "progress": task.progress,
+                "current_node": task.current_node or "",
+            })
+
+            async for event in self._poll_task_progress(task_id, user_id):
+                yield event
+
+        except Exception as e:
+            yield create_sse_event({"type": "error", "error": str(e)})
+
+    # ──────────── 内部方法 ────────────
+
+    @staticmethod
+    async def _build_graph() -> CompiledStateGraph:
+        """构建 V1 LangGraph 图"""
+        return await build_v1_graph()
+
+    @staticmethod
+    def _prepare_inputs(pet_info: Dict[str, Any]) -> tuple:
         """
-        异步执行任务（后台任务）
+        准备 V1 图的输入数据和上下文
 
-        注意：此方法在后台运行，需要使用独立的 database session，
-        不能与请求的 session 共享（请求完成后 session 会被关闭）。
+        Args:
+            pet_info: 宠物信息字典
+
+        Returns:
+            (inputs, context) 元组
+        """
+        pet_info_filtered = {
+            k: v for k, v in pet_info.items()
+            if k in PetInformation.model_fields
+        }
+        pet_information = PetInformation(**pet_info_filtered)
+        return {"pet_information": pet_information}, ContextV1()
+
+    async def _execute_task_async(self, task_id: str, pet_info: Dict[str, Any]):
+        """
+        后台异步执行任务
+
+        使用独立 db session，避免与请求 session 冲突（请求完成后 session 会被关闭）。
 
         Args:
             task_id: 任务 ID
             pet_info: 宠物信息
-            version: 图版本，默认 "v1"
         """
-        # 为后台任务创建独立的 session（避免与请求的 session 冲突）
         async with AsyncSessionLocal() as db:
             task_service = TaskService(db)
 
             try:
-                # 获取 LangGraph 图
-                graph = await self._get_langgraph(version)
+                graph = await self._build_graph()
+                config = {"configurable": {"thread_id": task_id}}
 
-                # 配置
-                config = {
-                    "configurable": {
-                        "thread_id": task_id
-                    }
-                }
-
-                # 更新任务状态
                 await task_service.update_task_status(task_id, "running")
 
-                # 构造输入 — 根据版本适配
-                if version == "v1":
-                    pet_info_filtered = {
-                        k: v for k, v in pet_info.items()
-                        if k in PetInformation.model_fields
-                    }
-                    pet_information = PetInformation(**pet_info_filtered)
-                    inputs = {"pet_information": pet_information}
-                    # V1: ainvoke 需要 context 参数
-                    result = await graph.ainvoke(inputs, config, context=ContextV1())
-                else:
-                    inputs = {"pet_information": pet_info}
-                    result = await graph.ainvoke(inputs, config)
+                inputs, context = self._prepare_inputs(pet_info)
+                result = await graph.ainvoke(inputs, config, context=context)
 
-                # 完成任务
                 completed_task = await task_service.complete_task(task_id, result)
-
-                # 保存到数据库（使用独立的 session）
                 await self._save_diet_plan(
-                    db,
-                    completed_task.user_id,
-                    task_id,
-                    pet_info,
-                    result
+                    db=db,
+                    user_id=completed_task.user_id,
+                    task_id=task_id,
+                    pet_info=pet_info,
+                    result=result,
                 )
 
             except Exception as e:
-                # 失败任务
                 await task_service.fail_task(task_id, str(e))
 
-    async def _update_task_progress_from_event(
+    async def _poll_task_progress(
         self,
         task_id: str,
-        event: str
-    ):
+        user_id: str,
+        poll_interval: float = 1.0,
+        timeout: int = 600,
+    ) -> AsyncGenerator[str, None]:
         """
-        从 ProgressEvent SSE 事件更新任务进度
+        轮询任务进度直到终态
 
-        支持两种事件来源：
-        - custom 模式的 ProgressEvent（含 progress 字段）
-        - updates 模式的 node_completed 事件
+        Args:
+            task_id: 任务 ID
+            user_id: 用户 ID
+            poll_interval: 轮询间隔（秒）
+            timeout: 超时时间（秒）
+
+        Yields:
+            SSE 格式事件字符串
+        """
+        start = asyncio.get_event_loop().time()
+        last_progress = -1
+        last_node = ""
+
+        while True:
+            if asyncio.get_event_loop().time() - start > timeout:
+                yield create_sse_event({
+                    "type": "error",
+                    "error": f"轮询超时（{timeout}秒）",
+                })
+                return
+
+            task = await self.task_service.get_task(task_id, user_id)
+
+            if task.status == "completed":
+                yield create_sse_event({
+                    "type": "task_completed",
+                    "task_id": task.id,
+                    "result": task.output_data or {},
+                })
+                return
+
+            if task.status in ("failed", "cancelled"):
+                yield create_sse_event({
+                    "type": "error",
+                    "task_id": task.id,
+                    "error": task.error_message or f"任务已{task.status}",
+                })
+                return
+
+            # 有进度变化时推送
+            current_node = task.current_node or ""
+            if task.progress != last_progress or current_node != last_node:
+                yield create_sse_event({
+                    "type": "progress_update",
+                    "task_id": task.id,
+                    "status": task.status,
+                    "progress": task.progress,
+                    "current_node": current_node,
+                })
+                last_progress = task.progress
+                last_node = current_node
+
+            await asyncio.sleep(poll_interval)
+
+    async def _update_task_progress_from_event(self, task_id: str, event: str):
+        """
+        从 SSE 事件中提取进度并更新任务
+
+        支持 custom 模式的 ProgressEvent（含 progress 字段）
+        和 updates 模式的 node_completed 事件。
 
         Args:
             task_id: 任务 ID
             event: SSE 事件字符串
         """
-        import json
-
         try:
-            # 解析事件
             if event.startswith("data: "):
-                json_str = event[6:].strip()
-                data = json.loads(json_str)
-
-                event_type = data.get("type", "")
-                node = data.get("node", "")
+                data = json.loads(event[6:].strip())
                 progress = data.get("progress")
-
-                # 优先使用 ProgressEvent 中的 progress 字段
                 if progress is not None:
+                    node = data.get("node", "") or data.get("type", "")
                     await self.task_service.update_task_progress(
-                        task_id,
-                        progress,
-                        node or event_type
+                        task_id, progress, node
                     )
-
         except (json.JSONDecodeError, KeyError):
-            # 忽略解析错误
             pass
 
     async def _save_diet_plan(
         self,
-        db: Optional[AsyncSession] = None,
-        user_id: str = None,
-        task_id: str = None,
-        pet_info: Dict[str, Any] = None,
-        result: Dict[str, Any] = None
+        *,
+        db: AsyncSession,
+        user_id: str,
+        task_id: str,
+        pet_info: Dict[str, Any],
+        result: Dict[str, Any],
     ):
         """
         保存饮食计划到数据库
 
+        使用 keyword-only 参数防止位置传参导致的类型错位。
+
         Args:
-            db: 数据库 session（可选，用于后台任务的独立 session）
+            db: 数据库 session
             user_id: 用户 ID
             task_id: 任务 ID
             pet_info: 宠物信息
@@ -473,33 +359,23 @@ class PlanService:
         """
         from src.db.models import DietPlan
 
-        # 使用传入的 db 或默认的 self.db
-        session = db or self.db
-
-        # 提取报告数据
         report = result.get("report", {})
-        # 处理 report 可能是 Pydantic 对象的情况
         if hasattr(report, "model_dump"):
             report = report.model_dump()
 
-        # 提取 pet_id（如果存在）
-        pet_id = pet_info.get("pet_id")
-
-        # 创建饮食计划记录
         diet_plan = DietPlan(
             id=str(uuid.uuid4()),
             user_id=user_id,
             task_id=task_id,
-            pet_id=pet_id,  # 关联宠物
+            pet_id=pet_info.get("pet_id"),
             pet_type=pet_info.get("pet_type", "unknown"),
             pet_breed=pet_info.get("pet_breed"),
             pet_age=pet_info.get("pet_age", 0),
             pet_weight=pet_info.get("pet_weight", 0),
             health_status=pet_info.get("health_status"),
             plan_data=report,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(timezone.utc),
         )
 
-        session.add(diet_plan)
-        await session.commit()
-
+        db.add(diet_plan)
+        await db.commit()

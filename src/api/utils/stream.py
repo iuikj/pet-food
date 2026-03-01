@@ -51,7 +51,7 @@ async def stream_langgraph_execution(
         async for mode, chunk in graph.astream(**astream_kwargs):
             if mode == "custom":
                 # ProgressEvent 数据，直接转发为 SSE
-                yield _create_sse_event(chunk)
+                yield create_sse_event(chunk)
 
             elif mode == "updates":
                 # 节点状态更新
@@ -61,7 +61,7 @@ async def stream_langgraph_execution(
                         if isinstance(node_output, dict):
                             final_output.update(node_output)
 
-                        yield _create_sse_event({
+                        yield create_sse_event({
                             "type": "node_completed",
                             "node": node_name,
                             "output": _serialize_output(node_output),
@@ -70,46 +70,26 @@ async def stream_langgraph_execution(
 
         # 发送最终结果
         if "report" in final_output:
-            yield _create_sse_event({
+            yield create_sse_event({
                 "type": "final_result",
                 "data": _serialize_output(final_output["report"]),
                 "timestamp": _get_timestamp(),
             })
 
-        yield _create_sse_event({
+        yield create_sse_event({
             "type": "done",
             "timestamp": _get_timestamp()
         })
 
     except Exception as e:
-        yield _create_sse_event({
+        yield create_sse_event({
             "type": "error",
             "error": str(e),
             "timestamp": _get_timestamp()
         })
 
 
-async def stream_langgraph_simple(
-    graph: CompiledStateGraph,
-    inputs: Dict[str, Any],
-    config: Dict[str, Any]
-) -> AsyncGenerator[Dict[str, Any], None]:
-    """
-    简化的流式执行（返回原始事件，不格式化为 SSE）
-
-    Args:
-        graph: 编译后的 LangGraph 图
-        inputs: 图的输入数据
-        config: 配置
-
-    Yields:
-        原始事件字典
-    """
-    async for event in graph.astream_events(inputs, config=config, version="v2"):
-        yield event
-
-
-def _create_sse_event(data: Dict[str, Any]) -> str:
+def create_sse_event(data: Dict[str, Any]) -> str:
     """
     创建 SSE 格式的事件
 
