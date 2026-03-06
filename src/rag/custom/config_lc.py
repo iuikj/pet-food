@@ -1,6 +1,9 @@
+import logging
 from pathlib import Path
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 # --- 基础路径配置 (推荐使用 pathlib 简化路径操作) ---
 # 项目根目录 (langchain_demo)
@@ -54,7 +57,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # --- 检查路径是否存在 (可选，但推荐) ---
 def check_model_paths():
     """启动时检查必要的模型路径是否存在"""
-    print("--- 正在检查模型路径 ---")
+    logger.debug("正在检查模型路径...")
     paths_to_check = {
         "Embedding Model": EMBEDDING_MODEL_PATH,
         "Reranker Model": RERANKER_MODEL_PATH,
@@ -63,19 +66,22 @@ def check_model_paths():
     all_paths_exist = True
     for name, path in paths_to_check.items():
         if not path.exists():
-            print(f"❌ 警告: {name} 路径不存在: {path}")
+            logger.warning("%s 路径不存在: %s", name, path)
             all_paths_exist = False
         else:
-            print(f"✅ {name} 路径正常: {path}")
+            logger.debug("%s 路径正常: %s", name, path)
 
     if not all_paths_exist:
-        print("\n[重要提示] 部分模型路径未找到。")
-        print(f"请确保所有模型已正确下载并放置在 '{MODEL_REPO_PATH}' 目录下。")
-    print("--- 路径检查完毕 ---\n")
+        logger.warning(
+            "部分模型路径未找到，请确保所有模型已正确下载并放置在 '%s' 目录下",
+            MODEL_REPO_PATH,
+        )
+    logger.debug("路径检查完毕")
 
 # 如果此文件作为主程序运行 (例如: python -m scripts_lc.config_lc)，则执行检查
 if __name__ == '__main__':
-    print(f"项目根目录: {PROJECT_ROOT}")
-    print(f"知识库目录: {KNOWLEDGE_BASE_DIR}")
-    print(f"FAISS 索引目录: {LC_FAISS_INDEX_PATH}")
+    logging.basicConfig(level=logging.DEBUG)
+    logger.info("项目根目录: %s", PROJECT_ROOT)
+    logger.info("知识库目录: %s", KNOWLEDGE_BASE_DIR)
+    logger.info("FAISS 索引目录: %s", LC_FAISS_INDEX_PATH)
     check_model_paths()

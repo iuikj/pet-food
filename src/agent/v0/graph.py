@@ -11,7 +11,6 @@ from src.agent.v0.utils.context import Context
 from src.agent.v0.write_agent.graph import build_write_agent
 
 load_dotenv(dotenv_path=".env", override=True)
-print(os.getenv("ZAI_API_KEY"))
 
 
 async def build_graph_with_langgraph_studio():

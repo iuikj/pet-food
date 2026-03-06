@@ -4,6 +4,7 @@
 """
 import json
 import asyncio
+import logging
 from typing import Dict, Any, AsyncGenerator
 from datetime import datetime, timezone
 import uuid
@@ -18,6 +19,8 @@ from src.api.utils.stream import stream_langgraph_execution, create_sse_event
 from src.agent.v1.graph import build_v1_graph
 from src.agent.v1.utils.context import ContextV1
 from src.utils.strtuct import PetInformation
+
+logger = logging.getLogger(__name__)
 
 
 class PlanService:
@@ -87,18 +90,21 @@ class PlanService:
             input_data=pet_info,
         )
 
-        yield create_sse_event({"type": "task_created", "task_id": task.id})
+        # 提前缓存 task_id，避免 session 异常后无法访问 ORM 属性
+        task_id = task.id
+
+        yield create_sse_event({"type": "task_created", "task_id": task_id})
 
         try:
             graph = await self._build_graph()
             config = {
                 "configurable": {
-                    "thread_id": task.id,
+                    "thread_id": task_id,
                     "user_id": user_id,
                 }
             }
 
-            await self.task_service.update_task_status(task.id, "running")
+            await self.task_service.update_task_status(task_id, "running")
 
             inputs, context = self._prepare_inputs(pet_info)
 
@@ -107,23 +113,33 @@ class PlanService:
             async for event in stream_langgraph_execution(
                 graph, inputs, config, final_output, context=context
             ):
-                await self._update_task_progress_from_event(task.id, event)
+                await self._update_task_progress_from_event(task_id, event)
+                logger.debug("SSE event: %s", event)
                 yield event
 
             # 流式结束后持久化（无需再调用 ainvoke）
-            await self.task_service.complete_task(task.id, final_output)
+            await self.task_service.complete_task(task_id, final_output)
             await self._save_diet_plan(
                 db=self.db,
                 user_id=user_id,
-                task_id=task.id,
+                task_id=task_id,
                 pet_info=pet_info,
                 result=final_output,
             )
 
-            yield create_sse_event({"type": "task_completed", "task_id": task.id})
+            yield create_sse_event({"type": "task_completed", "task_id": task_id})
 
         except Exception as e:
-            await self.task_service.fail_task(task.id, str(e))
+            logger.error("流式饮食计划执行失败: %s", e, exc_info=True)
+            # 先回滚脏事务，再标记任务失败
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+            try:
+                await self.task_service.fail_task(task_id, str(e))
+            except Exception as fail_err:
+                logger.error("标记任务失败时出错: %s", fail_err)
             yield create_sse_event({"type": "error", "error": str(e)})
 
     async def resume_diet_plan_stream(
@@ -247,7 +263,15 @@ class PlanService:
                 )
 
             except Exception as e:
-                await task_service.fail_task(task_id, str(e))
+                logger.error("后台任务执行失败 [%s]: %s", task_id, e, exc_info=True)
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+                try:
+                    await task_service.fail_task(task_id, str(e))
+                except Exception as fail_err:
+                    logger.error("标记任务失败时出错 [%s]: %s", task_id, fail_err)
 
     async def _poll_task_progress(
         self,

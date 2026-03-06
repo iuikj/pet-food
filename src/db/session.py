@@ -2,6 +2,7 @@
 数据库会话管理
 使用 SQLAlchemy 异步引擎
 """
+import logging
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -12,6 +13,8 @@ from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
 from sqlalchemy import text
 from src.api.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # 创建异步引擎
@@ -78,5 +81,5 @@ async def test_connection() -> bool:
             await conn.execute(text("SELECT 1"))
         return True
     except Exception as e:
-        print(f"❌ 数据库连接失败: {e}")
+        logger.error("数据库连接失败: %s", e)
         return False

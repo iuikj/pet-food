@@ -1,3 +1,4 @@
+import logging
 from typing import List, Any, Optional
 
 import torch
@@ -14,6 +15,8 @@ from src.rag.custom.config_lc import (
     EMBEDDING_MODEL_PATH, RERANKER_MODEL_PATH, LLM_MODEL_PATH, DEVICE,
     EMBEDDING_MAX_LENGTH, RERANKER_MAX_LENGTH, LLM_MAX_NEW_TOKENS
 )
+
+logger = logging.getLogger(__name__)
 
 
 # --- 辅助函数 ---
@@ -40,7 +43,7 @@ class QwenEmbeddings(Embeddings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        print("正在加载 Embedding 模型...")
+        logger.debug("正在加载 Embedding 模型: %s", EMBEDDING_MODEL_PATH)
         # 优化: 根据官方示例, 增加 padding_side='left'
         self.tokenizer = AutoTokenizer.from_pretrained(
             EMBEDDING_MODEL_PATH, trust_remote_code=True, padding_side='left'
@@ -48,7 +51,7 @@ class QwenEmbeddings(Embeddings):
         self.model = AutoModel.from_pretrained(
             EMBEDDING_MODEL_PATH, trust_remote_code=True, torch_dtype=torch.float16
         ).to(DEVICE).eval()
-        print("Embedding 模型加载成功。")
+        logger.info("Embedding 模型加载成功")
 
     def _get_instruct(self, task_description: str, query: str) -> str:
         # 与官方示例 `get_detailed_instruct` 函数对齐
@@ -97,7 +100,7 @@ class QwenReranker(BaseDocumentCompressor):
     def __init__(self, top_n: int, **kwargs):
         super().__init__(**kwargs)
         self.top_n = top_n
-        print("正在加载 Reranker 模型...")
+        logger.debug("正在加载 Reranker 模型: %s", RERANKER_MODEL_PATH)
         self.tokenizer = AutoTokenizer.from_pretrained(
             RERANKER_MODEL_PATH, trust_remote_code=True, padding_side='left'
         )
@@ -114,7 +117,7 @@ class QwenReranker(BaseDocumentCompressor):
         self.prefix_tokens = self.tokenizer.encode(prefix, add_special_tokens=False)
         self.suffix_tokens = self.tokenizer.encode(suffix, add_special_tokens=False)
 
-        print("Reranker 模型加载成功。")
+        logger.info("Reranker 模型加载成功")
 
     def _format_instruction(self, instruction, query, doc):
         return f"<Instruct>: {instruction}\n<Query>: {query}\n<Document>: {doc}"
@@ -170,13 +173,13 @@ class QwenLLM(LLM):
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
-        print("正在加载 LLM 生成模型...")
+        logger.debug("正在加载 LLM 生成模型: %s", LLM_MODEL_PATH)
         self.tokenizer = AutoTokenizer.from_pretrained(LLM_MODEL_PATH, trust_remote_code=True)
         self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
         self.model = AutoModelForCausalLM.from_pretrained(
             LLM_MODEL_PATH, torch_dtype=torch.float16, device_map="auto", trust_remote_code=True
         ).eval()
-        print("LLM 生成模型加载成功。")
+        logger.info("LLM 生成模型加载成功")
 
     @property
     def _llm_type(self) -> str:

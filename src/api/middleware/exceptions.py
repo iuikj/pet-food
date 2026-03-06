@@ -63,7 +63,7 @@ def setup_exception_handlers(app: FastAPI):
         """处理所有未捕获的异常"""
         # 记录错误日志
         logger.error(
-            f"❌ 未捕获的异常: {exc}",
+            f"未捕获的异常: {exc}",
             exc_info=True,
             extra={
                 "path": str(request.url),

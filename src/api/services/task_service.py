@@ -2,8 +2,10 @@
 任务管理服务
 处理任务的创建、查询、取消等操作
 """
+import json
+import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List
+from typing import Optional, List, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, func
 import uuid
@@ -12,6 +14,52 @@ from src.db.models import Task, User
 from src.api.utils.errors import NotFoundException, TaskException
 from src.api.models.response import TaskResponse, TaskListResponse
 from src.api.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """
+    递归清洗数据，确保可被 JSON 序列化。
+
+    将 LangChain Message 对象、Pydantic BaseModel 等转换为纯 dict/list/基本类型。
+    """
+    # None / bool / int / float / str 直接返回
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+
+    # Pydantic BaseModel（含 LangChain Message 子类）
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump()
+        except Exception:
+            pass
+
+    # 旧版 Pydantic / 自定义对象的 dict() 方法
+    if hasattr(obj, "dict") and callable(obj.dict):
+        try:
+            return obj.dict()
+        except Exception:
+            pass
+
+    # dict —— 递归清洗键值
+    if isinstance(obj, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in obj.items()}
+
+    # list / tuple —— 递归清洗元素
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(item) for item in obj]
+
+    # set
+    if isinstance(obj, set):
+        return [_sanitize_for_json(item) for item in obj]
+
+    # 最后兜底：尝试 str()
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError):
+        return str(obj)
 
 
 class TaskService:
@@ -182,7 +230,7 @@ class TaskService:
             progress=100
         )
 
-        task.output_data = output_data
+        task.output_data = _sanitize_for_json(output_data)
         await self.db.commit()
         await self.db.refresh(task)
 

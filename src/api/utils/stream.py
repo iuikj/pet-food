@@ -4,9 +4,12 @@
 使用 astream(stream_mode=["custom", "updates"]) 消费业务级 ProgressEvent
 """
 import json
+import logging
 from typing import AsyncGenerator, Dict, Any
 from datetime import datetime, timezone
 from langgraph.graph.state import CompiledStateGraph
+
+logger = logging.getLogger(__name__)
 
 
 async def stream_langgraph_execution(
@@ -40,15 +43,21 @@ async def stream_langgraph_execution(
 
     try:
         # 构建 astream 调用参数，条件传入 context 以兼容 V0/V1
-        astream_kwargs: Dict[str, Any] = {
-            "input": inputs,
-            "config": config,
-            "stream_mode": ["custom", "updates"],
-        }
-        if context is not None:
-            astream_kwargs["context"] = context
+        # astream_kwargs: Dict[str, Any] = {
+        #     "input": inputs,
+        #     "config": config,
+        #     "stream_mode": ["custom"],
+        # }
+        # if context is not None:
+        #     astream_kwargs["context"] = context
 
-        async for mode, chunk in graph.astream(**astream_kwargs):
+        async for namespace, mode, chunk in graph.astream(
+            input=inputs,
+            config=config,
+            stream_mode=["custom"],
+            context=context,
+            subgraphs=True
+        ):
             if mode == "custom":
                 # ProgressEvent 数据，直接转发为 SSE
                 yield create_sse_event(chunk)
@@ -99,6 +108,7 @@ def create_sse_event(data: Dict[str, Any]) -> str:
     Returns:
         SSE 格式字符串（"data: {json}\\n\\n"）
     """
+    logger.debug("create_sse_event: %s", data)
     json_str = json.dumps(data, ensure_ascii=False)
     return f"data: {json_str}\n\n"
 

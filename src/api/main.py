@@ -2,37 +2,46 @@
 FastAPI 主应用
 宠物饮食计划智能助手 API 服务
 """
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
 
 from src.api.config import settings
 from src.db.session import init_db, close_db
 from src.db.redis import close_redis
+
+# 配置 Python 标准日志 —— uvicorn 的 log_level 仅控制自身，不影响应用日志
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时执行
-    print("=" * 60)
-    print("FastAPI 服务启动中...")
-    print(f"   环境: {'开发' if settings.is_dev else '生产'}")
-    print(f"   地址: http://{settings.api_host}:{settings.api_port}")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("FastAPI 服务启动中...")
+    logger.info("  环境: %s", "开发" if settings.is_dev else "生产")
+    logger.info("  地址: http://%s:%s", settings.api_host, settings.api_port)
+    logger.info("=" * 60)
 
     # 测试数据库连接
-    print("测试数据库连接...")
+    logger.info("测试数据库连接...")
     from src.db.session import test_connection, Base
 
     db_ok = await test_connection()
 
     # 如果数据库连接成功，检查并创建表
     if db_ok:
-        print("数据库连接正常")
-        print("检查并创建数据库表...")
+        logger.info("数据库连接正常")
+        logger.info("检查并创建数据库表...")
         try:
             # 导入数据库引擎
             from src.db.session import engine
@@ -40,30 +49,28 @@ async def lifespan(app: FastAPI):
             # 创建所有表（如果不存在）
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            print("数据库表已就绪")
+            logger.info("数据库表已就绪")
         except Exception as e:
-            print(f"创建数据库表时出错: {e}")
+            logger.error("创建数据库表时出错: %s", e)
             # 继续启动，让应用在需要时尝试创建
 
     # 测试 Redis 连接
-    print("测试 Redis 连接...")
+    logger.info("测试 Redis 连接...")
     from src.db.redis import test_redis_connection
     redis_ok = await test_redis_connection()
 
     if db_ok and redis_ok:
-        print("所有依赖服务连接正常")
+        logger.info("所有依赖服务连接正常")
     else:
-        print("部分依赖服务连接失败，请检查配置")
-
-    print()
+        logger.warning("部分依赖服务连接失败，请检查配置")
 
     yield
 
     # 关闭时执行
-    print("\nFastAPI 服务关闭中...")
+    logger.info("FastAPI 服务关闭中...")
     await close_db()
     await close_redis()
-    print("所有连接已关闭")
+    logger.info("所有连接已关闭")
 
 
 # 创建 FastAPI 应用（生产环境禁用 API 文档）
@@ -106,21 +113,6 @@ if settings.rate_limit_enabled:
 # 配置全局异常处理器
 from src.api.middleware.exceptions import setup_exception_handlers
 setup_exception_handlers(app)
-
-
-# 全局异常处理器
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """全局异常处理"""
-    print(f"[ERROR] 未捕获的异常: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "code": -1,
-            "message": "服务器内部错误",
-            "detail": str(exc) if settings.is_dev else "请联系管理员",
-        },
-    )
 
 
 # 根路由

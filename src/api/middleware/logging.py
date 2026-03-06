@@ -30,7 +30,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # 记录请求开始
-        logger.info(f"📥 请求开始: {method} {path} from {client_ip}")
+        logger.info(f"请求开始: {method} {path} from {client_ip}")
 
         # 处理请求
         try:
@@ -42,7 +42,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             # 记录请求完成
             status_code = response.status_code
             logger.info(
-                f"📤 请求完成: {method} {path} - "
+                f"请求完成: {method} {path} - "
                 f"状态码: {status_code} - "
                 f"耗时: {process_time:.3f}s"
             )
@@ -58,7 +58,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
             # 记录请求错误
             logger.error(
-                f"❌ 请求错误: {method} {path} - "
+                f"请求错误: {method} {path} - "
                 f"错误: {str(e)} - "
                 f"耗时: {process_time:.3f}s"
             )

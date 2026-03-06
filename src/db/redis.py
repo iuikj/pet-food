@@ -2,11 +2,14 @@
 Redis 客户端管理
 """
 import json
+import logging
 from typing import Any, Optional
 import redis.asyncio as redis
 from redis.asyncio import ConnectionPool
 
 from src.api.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # 创建 Redis 连接池
@@ -71,7 +74,7 @@ async def set_json(key: str, value: Any, expire: int = 3600) -> bool:
         await client.setex(key, expire, json_str)
         return True
     except Exception as e:
-        print(f"[ERROR] Redis set JSON failed: {e}")
+        logger.error("Redis set JSON failed: %s", e)
         return False
 
 
@@ -92,7 +95,7 @@ async def get_json(key: str) -> Optional[Any]:
             return None
         return json.loads(json_str)
     except Exception as e:
-        print(f"[ERROR] Redis get JSON failed: {e}")
+        logger.error("Redis get JSON failed: %s", e)
         return None
 
 
@@ -115,7 +118,7 @@ async def delete_keys(pattern: str) -> int:
             return await client.delete(*keys)
         return 0
     except Exception as e:
-        print(f"[ERROR] Redis batch delete failed: {e}")
+        logger.error("Redis batch delete failed: %s", e)
         return 0
 
 
@@ -124,8 +127,8 @@ async def test_redis_connection() -> bool:
     try:
         client = await get_redis()
         await client.ping()
-        print("[OK] Redis connection successful")
+        logger.info("Redis connection successful")
         return True
     except Exception as e:
-        print(f"[ERROR] Redis connection failed: {e}")
+        logger.error("Redis connection failed: %s", e)
         return False

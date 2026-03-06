@@ -6,6 +6,7 @@ dispatch_weeks: Phase 1→2 转折，生成 4 个 Send 并行任务
 collect_and_structure: Phase 2→3 转折，收集笔记并 Send 到结构化智能体
 gather: 汇总所有周计划生成最终报告
 """
+import logging
 from typing import Literal, cast
 
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
@@ -29,6 +30,8 @@ from src.agent.v1.tools import (
     finalize_research,
 )
 from src.agent.v1.utils.context import ContextV1
+
+logger = logging.getLogger(__name__)
 
 
 # ────────────────────────────────────────────────────────
@@ -265,7 +268,7 @@ async def collect_and_structure(state: StateV1) -> Command[Literal["structure_re
         node="collect_and_structure",
         progress=80,
     )
-    print(f"Gathering notes...{notes}")
+    logger.debug("Gathering notes: %s", list(notes.keys()))
     sends = [
         Send(
             node="structure_report",

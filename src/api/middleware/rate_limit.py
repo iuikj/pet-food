@@ -2,12 +2,15 @@
 速率限制中间件
 基于 Redis 实现请求速率限制
 """
+import logging
 from fastapi import Request, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 import time
 
 from src.api.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -75,7 +78,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         except Exception as e:
             # Redis 出错时不影响正常请求
-            print(f"⚠️  速率限制中间件错误: {e}")
+            logger.warning("速率限制中间件错误: %s", e)
             return await call_next(request)
 
     async def _get_identifier(self, request: Request) -> str:
