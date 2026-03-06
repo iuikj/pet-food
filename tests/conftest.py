@@ -3,12 +3,11 @@
 配置 pytest 和测试数据库
 """
 import os
-import asyncio
 import pytest
+import pytest_asyncio
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-import uvicorn
 
 # 添加项目根目录到 Python 路径
 import sys
@@ -38,15 +37,7 @@ AsyncTestSession = sessionmaker(
 )
 
 
-@pytest.fixture(scope="session")
-async def event_loop():
-    """创建事件循环"""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session")
 async def test_db():
     """创建测试数据库"""
     from src.db.models import Base
@@ -62,7 +53,7 @@ async def test_db():
         await conn.run_sync(Base.metadata.drop_all)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def test_session(test_db) -> AsyncGenerator[AsyncSession, None]:
     """创建测试会话"""
     async with AsyncTestSession() as session:
@@ -79,25 +70,18 @@ def test_user_data():
     }
 
 
-@pytest.fixture
-def auth_headers(test_user_data, test_session) -> dict:
+@pytest_asyncio.fixture
+async def auth_headers(test_user_data, test_session) -> dict:
     """创建认证请求头"""
-    import json
-
-    # 创建测试用户并获取 Token
     from src.api.services.auth_service import AuthService
 
-    async def get_token():
-        auth_service = AuthService(test_session)
-        user, tokens = await auth_service.register(
-            username=test_user_data["username"],
-            email=test_user_data["email"],
-            password=test_user_data["password"]
-        )
-        return tokens
-
-    token_data = asyncio.run(get_token())
+    auth_service = AuthService(test_session)
+    user, tokens = await auth_service.register(
+        username=test_user_data["username"],
+        email=test_user_data["email"],
+        password=test_user_data["password"]
+    )
 
     return {
-        "Authorization": f"Bearer {token_data.access_token}"
+        "Authorization": f"Bearer {tokens.access_token}"
     }

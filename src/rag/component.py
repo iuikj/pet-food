@@ -1,4 +1,7 @@
+import logging
 from typing import Any, List, Sequence
+
+logger = logging.getLogger(__name__)
 
 
 class DashscopeEmbeddings:
@@ -42,8 +45,12 @@ class DashscopeEmbeddings:
         for i in range(0, len(clean_texts), batch_size):
             batch = clean_texts[i:i + batch_size]
 
-            print(f"[Embedding] 批次 {i // batch_size + 1} / {(len(clean_texts) + batch_size - 1) // batch_size} "
-                  f"（本批 {len(batch)} 条）")
+            logger.debug(
+                "[Embedding] 批次 %d / %d （本批 %d 条）",
+                i // batch_size + 1,
+                (len(clean_texts) + batch_size - 1) // batch_size,
+                len(batch),
+            )
 
             resp = self._client.embeddings.create(
                 model=self._model,
@@ -62,13 +69,11 @@ class DashscopeEmbeddings:
 
 
 import time
-import logging
 from typing import Any, List, Optional
 from openai import OpenAI
 from langchain_core.documents import Document
 from langchain.retrievers.document_compressors.base import BaseDocumentCompressor
 
-logger = logging.getLogger(__name__)
 
 
 class DashscopeReranker(BaseDocumentCompressor):

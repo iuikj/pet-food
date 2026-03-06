@@ -74,7 +74,7 @@ def create_write_note_tool(
     ):
         if file_name in state["note"] if "note" in state else {}:
             notes = state["note"] if "note" in state else {}
-            # todo:此处计算长度是干什么，得确定一下
+            #todo:此处计算长度是干什么，得确定一下
             file_name = file_name + "_" + str(len(notes[file_name].content))
 
         msg_key = message_key or "messages"

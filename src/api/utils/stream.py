@@ -4,9 +4,12 @@
 使用 astream(stream_mode=["custom", "updates"]) 消费业务级 ProgressEvent
 """
 import json
+import logging
 from typing import AsyncGenerator, Dict, Any
 from datetime import datetime, timezone
 from langgraph.graph.state import CompiledStateGraph
+
+logger = logging.getLogger(__name__)
 
 
 async def stream_langgraph_execution(
@@ -14,6 +17,7 @@ async def stream_langgraph_execution(
     inputs: Dict[str, Any],
     config: Dict[str, Any],
     final_output: Dict[str, Any] | None = None,
+    context: Any = None,
 ) -> AsyncGenerator[str, None]:
     """
     流式执行 LangGraph 并返回 SSE 事件。
@@ -29,6 +33,7 @@ async def stream_langgraph_execution(
         inputs: 图的输入数据
         config: 配置，包含 thread_id 等
         final_output: 可选的可变 dict，迭代结束后包含累积的最终状态（用于持久化）
+        context: 可选的上下文对象（V1 使用 ContextV1，V0 为 None）
 
     Yields:
         SSE 格式的事件字符串（"data: {json}\\n\\n"）
@@ -37,12 +42,25 @@ async def stream_langgraph_execution(
         final_output = {}
 
     try:
-        async for mode, chunk in graph.astream(
-            inputs, config=config, stream_mode=["custom", "updates"]
+        # 构建 astream 调用参数，条件传入 context 以兼容 V0/V1
+        # astream_kwargs: Dict[str, Any] = {
+        #     "input": inputs,
+        #     "config": config,
+        #     "stream_mode": ["custom"],
+        # }
+        # if context is not None:
+        #     astream_kwargs["context"] = context
+
+        async for namespace, mode, chunk in graph.astream(
+            input=inputs,
+            config=config,
+            stream_mode=["custom"],
+            context=context,
+            subgraphs=True
         ):
             if mode == "custom":
                 # ProgressEvent 数据，直接转发为 SSE
-                yield _create_sse_event(chunk)
+                yield create_sse_event(chunk)
 
             elif mode == "updates":
                 # 节点状态更新
@@ -52,7 +70,7 @@ async def stream_langgraph_execution(
                         if isinstance(node_output, dict):
                             final_output.update(node_output)
 
-                        yield _create_sse_event({
+                        yield create_sse_event({
                             "type": "node_completed",
                             "node": node_name,
                             "output": _serialize_output(node_output),
@@ -61,46 +79,26 @@ async def stream_langgraph_execution(
 
         # 发送最终结果
         if "report" in final_output:
-            yield _create_sse_event({
+            yield create_sse_event({
                 "type": "final_result",
                 "data": _serialize_output(final_output["report"]),
                 "timestamp": _get_timestamp(),
             })
 
-        yield _create_sse_event({
+        yield create_sse_event({
             "type": "done",
             "timestamp": _get_timestamp()
         })
 
     except Exception as e:
-        yield _create_sse_event({
+        yield create_sse_event({
             "type": "error",
             "error": str(e),
             "timestamp": _get_timestamp()
         })
 
 
-async def stream_langgraph_simple(
-    graph: CompiledStateGraph,
-    inputs: Dict[str, Any],
-    config: Dict[str, Any]
-) -> AsyncGenerator[Dict[str, Any], None]:
-    """
-    简化的流式执行（返回原始事件，不格式化为 SSE）
-
-    Args:
-        graph: 编译后的 LangGraph 图
-        inputs: 图的输入数据
-        config: 配置
-
-    Yields:
-        原始事件字典
-    """
-    async for event in graph.astream_events(inputs, config=config, version="v2"):
-        yield event
-
-
-def _create_sse_event(data: Dict[str, Any]) -> str:
+def create_sse_event(data: Dict[str, Any]) -> str:
     """
     创建 SSE 格式的事件
 
@@ -110,6 +108,7 @@ def _create_sse_event(data: Dict[str, Any]) -> str:
     Returns:
         SSE 格式字符串（"data: {json}\\n\\n"）
     """
+    logger.debug("create_sse_event: %s", data)
     json_str = json.dumps(data, ensure_ascii=False)
     return f"data: {json_str}\n\n"
 

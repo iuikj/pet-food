@@ -3,8 +3,7 @@
         "."
     ],
     "graphs": {
-        "pet_food": "./src/agent/graph.py:build_graph_with_langgraph_studio"
+        "pet_food": "./src/agent/v0/graph.py:build_graph_with_langgraph_studio",
+        "pet_food_v1": "./src/agent/v1/graph.py:build_v1_graph"
     }
 }
-
-

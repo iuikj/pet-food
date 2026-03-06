@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import List
 
@@ -9,6 +10,8 @@ from langchain_openai import OpenAIEmbeddings
 from pymilvus import DataType, MilvusClient
 
 from src.rag.component import DashscopeEmbeddings
+
+logger = logging.getLogger(__name__)
 
 
 class MilvusManager:
@@ -96,7 +99,7 @@ class MilvusManager:
             )
             return compression_retriever
         except Exception as e:
-            print(f"Error initializing ContextualCompressionRetriever: {e}")
+            logger.error("Error initializing ContextualCompressionRetriever: %s", e)
 
     async def create_vector_store_from_documents(self, documents, connect=None, drop=False):
         analyzer_params = {
@@ -161,7 +164,7 @@ class MilvusManager:
             **self.connect,
         )
         client.drop_collection(collection_name=self.collection_name)
-        print(f"已删除向量库：{self.collection_name}")
+        logger.info("已删除向量库: %s", self.collection_name)
 
     async def _init_collection(self):
         """
@@ -189,7 +192,7 @@ class MilvusManager:
             **self.connect,
         )
         client.list_collections()
-        print(client.describe_collection(self.collection_name))
+        logger.debug("Collection schema: %s", client.describe_collection(self.collection_name))
 
     # async def search_with_hybrid_rerank(self, query: str, k: int = 3) -> list[RagClause]:
     #     # 混合检索
