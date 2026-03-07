@@ -91,9 +91,11 @@ def emit_progress(
     """
     try:
         from langgraph.config import get_stream_writer
-
+        import logging
         writer = get_stream_writer()
         event = ProgressEvent(type=event_type, message=message, **kwargs)
+        logger = logging.getLogger(__name__)
+        logger.info(f"emit_progress: {event.to_dict()}")
         writer(event.to_dict())
     except Exception:
         # ainvoke 模式下无 writer，或其他异常均静默跳过
