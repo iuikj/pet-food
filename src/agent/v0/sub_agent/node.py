@@ -1,26 +1,24 @@
 from typing import Literal, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_dev_utils import (
-    has_tool_calling,
-    load_chat_model,
-    message_format,
-    parse_tool_calling,
-)
+from langchain_core.runnables import RunnableConfig
+from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
+from langchain_dev_utils.chat_models import load_chat_model
+from src.agent.v0.utils.format import message_format
 from langgraph.prebuilt import ToolNode
-from langgraph.runtime import get_runtime
 from langgraph.types import Command
 
 from src.agent.v0.stream_events import ProgressEventType, emit_progress
 from src.agent.v0.sub_agent.state import SubAgentState
 from src.agent.v0.tools import get_weather, query_note, tavily_search
-from src.agent.v0.utils.context import Context
+from src.agent.v0.utils.context import resolve_v0_context
 
 
 async def subagent_call_model(
     state: SubAgentState,
+    config: RunnableConfig,
 ) -> Command[Literal["sub_tools", "__end__"]]:
-    run_time = get_runtime(Context)
+    ctx = resolve_v0_context(config)
     last_ai_message = cast(AIMessage, state["messages"][-1])
 
     _, args = parse_tool_calling(last_ai_message, first_tool_call_only=True)
@@ -38,7 +36,7 @@ async def subagent_call_model(
     messages = state["temp_task_messages"] if "temp_task_messages" in state else []
 
     model = load_chat_model(
-        model=run_time.context.sub_model,
+        model=ctx.sub_model,
         **{
             "max_retries": 3
         }
@@ -54,7 +52,7 @@ async def subagent_call_model(
     response = await model.ainvoke(
         [
             SystemMessage(
-                content=run_time.context.sub_prompt.format(
+                content=ctx.sub_prompt.format(
                     task_name=task_name,
                     history_files=message_format(list(notes.keys()))
                     if notes
@@ -67,9 +65,9 @@ async def subagent_call_model(
         ]
     )
 
-    if has_tool_calling(cast(AIMessage, response)):
+    if has_tool_calling(response):
         tool_name, _ = parse_tool_calling(
-            cast(AIMessage, response), first_tool_call_only=True
+            response, first_tool_call_only=True
         )
         # 根据工具类型发送对应进度事件
         if tool_name == "tavily_search":

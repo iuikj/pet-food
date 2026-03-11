@@ -8,20 +8,17 @@ week_finalize: 发送完成进度事件（note 已由 week_write_note 工具直�
 from typing import Literal, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_dev_utils import (
-    has_tool_calling,
-    load_chat_model,
-    parse_tool_calling,
-)
+from langchain_core.runnables import RunnableConfig
+from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
+from langchain_dev_utils.chat_models import load_chat_model
 from langgraph.prebuilt import ToolNode
-from langgraph.runtime import get_runtime
 from langgraph.types import Command
 
 from src.agent.v0.entity.note import Note
 from src.agent.v0.stream_events import ProgressEventType, emit_progress
 from src.agent.v0.tools import tavily_search
 from src.agent.v1.models import WeekAssignment
-from src.agent.v1.utils.context import ContextV1
+from src.agent.v1.utils.context import ContextV1, resolve_context
 from src.agent.v1.week_agent.state import WeekAgentState
 from src.agent.v1.week_agent.tools import (
     create_query_shared_note_tool,
@@ -35,9 +32,10 @@ week_write_note = create_week_write_note_tool()
 
 async def week_planner(
     state: WeekAgentState,
+    config: RunnableConfig,
 ) -> Command[Literal["week_tools", "week_write", "__end__"]]:
     """周计划核心节点：搜索 + 查询笔记 → 输出完整周计划"""
-    run_time = get_runtime(ContextV1)
+    ctx = resolve_context(config)
     assignment: WeekAssignment = state["week_assignment"]
     week_num = assignment.week_number
     info = state["pet_information"]
@@ -61,7 +59,7 @@ async def week_planner(
         else "（暂无共享笔记）"
     )
 
-    prompt = run_time.context.week_planner_prompt.format(
+    prompt = ctx.week_planner_prompt.format(
         week_number=week_num,
         pet_information=info,
         theme=assignment.theme,
@@ -79,7 +77,7 @@ async def week_planner(
 
     # 加载模型
     model = load_chat_model(
-        model=run_time.context.week_model,
+        model=ctx.week_model,
         max_retries=3,
     )
     tools = [tavily_search, query_shared_note]
@@ -97,9 +95,9 @@ async def week_planner(
 
     response = await bind_model.ainvoke(messages_to_send)
 
-    if has_tool_calling(cast(AIMessage, response)):
+    if has_tool_calling(response):
         tool_name, _ = parse_tool_calling(
-            cast(AIMessage, response), first_tool_call_only=True
+            response, first_tool_call_only=True
         )
 
         if tool_name == "tavily_search":
@@ -134,9 +132,9 @@ async def week_planner(
     )
 
 
-async def week_write(state: WeekAgentState) -> Command[Literal["week_write_tool"]]:
+async def week_write(state: WeekAgentState, config: RunnableConfig) -> Command[Literal["week_write_tool"]]:
     """将周计划写入笔记"""
-    run_time = get_runtime(ContextV1)
+    ctx = resolve_context(config)
     assignment: WeekAssignment = state["week_assignment"]
     week_num = assignment.week_number
 
@@ -152,7 +150,7 @@ async def week_write(state: WeekAgentState) -> Command[Literal["week_write_tool"
     plan_content = task_messages[-1].content if task_messages else ""
 
     write_model = load_chat_model(
-        model=run_time.context.write_model,
+        model=ctx.write_model,
     ).bind_tools([week_write_note], tool_choice="week_write_note")
 
     write_prompt = f"""请调用 week_write_note 工具保存以下第{week_num}周饮食计划。

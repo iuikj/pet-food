@@ -1,8 +1,15 @@
 """
 V1 运行时上下文配置
+
+提供 ContextV1 数据类和 resolve_context 双层配置解析函数。
+- 优先使用 LangGraph context_schema（直接调用/LangGraph Studio）
+- 回退到 RunnableConfig.configurable（CopilotKit LangGraphAGUIAgent）
 """
-from dataclasses import dataclass
-from typing import Annotated
+import logging
+from dataclasses import dataclass, fields
+from typing import Annotated, Optional
+
+from langchain_core.runnables import RunnableConfig
 
 from src.agent.v0.prompts.prompt import (
     SUBAGENT_PROMPT,
@@ -14,6 +21,8 @@ from src.agent.v1.prompts.prompt import (
     COORDINATION_GUIDE_PROMPT,
     WEEK_PLANNER_PROMPT,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,3 +50,35 @@ class ContextV1:
 
     # Phase 3: 结构化
     report_prompt: Annotated[str, "结构化报告提示词"] = "请你根据我给出的内容生成结构化报告"
+
+    @classmethod
+    def from_runnable_config(
+        cls, config: Optional[RunnableConfig] = None
+    ) -> "ContextV1":
+        """从 RunnableConfig.configurable 中提取配置，缺省使用默认值"""
+        configurable = (
+            config["configurable"] if config and "configurable" in config else {}
+        )
+        values = {
+            f.name: configurable[f.name]
+            for f in fields(cls)
+            if f.init and f.name in configurable
+        }
+        return cls(**values)
+
+
+def resolve_context(config: Optional[RunnableConfig] = None) -> ContextV1:
+    """双层配置解析：优先 context_schema，回退 RunnableConfig
+
+    Layer 1: get_runtime(ContextV1).context — LangGraph 原生 context_schema 注入
+    Layer 2: ContextV1.from_runnable_config(config) — CopilotKit / 旧版 config 方式
+    """
+    try:
+        from langgraph.runtime import get_runtime
+        runtime = get_runtime(ContextV1)
+        if runtime and runtime.context is not None:
+            return runtime.context
+    except (ImportError, AttributeError, RuntimeError) as e:
+        logger.debug("context_schema 不可用 (%s: %s)，回退到 RunnableConfig", type(e).__name__, e)
+
+    return ContextV1.from_runnable_config(config)

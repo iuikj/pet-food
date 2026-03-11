@@ -8,8 +8,8 @@ from typing import Annotated
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import MessagesState, add_messages
-from langchain_dev_utils import PlanStateMixin
 
+from src.agent.v0.entity.plan import PlanStateMixin
 from src.agent.v0.entity.note import Note, note_reducer
 from src.agent.v0.entity.note import NoteStateMixin
 from src.agent.v0.utils.struct import PetDietPlan, WeeklyDietPlan

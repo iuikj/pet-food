@@ -1,9 +1,10 @@
 from typing import Literal, cast
 
 from langchain_core.messages import AIMessage, SystemMessage
-from langchain_dev_utils import has_tool_calling, load_chat_model, parse_tool_calling
+from langchain_core.runnables import RunnableConfig
+from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
+from langchain_dev_utils.chat_models import load_chat_model
 from langgraph.prebuilt import ToolNode
-from langgraph.runtime import get_runtime
 from langgraph.types import Command, Send
 
 from src.agent.v0.entity.note import Note
@@ -13,15 +14,16 @@ from src.agent.v0.tools import (
     ls,
     query_note,
     transfor_task_to_subagent,
-    update_plan,
+    finish_sub_plan,
+    read_plan_tool,
     write_plan,
 )
-from src.agent.v0.utils.context import Context
+from src.agent.v0.utils.context import resolve_v0_context
 from src.agent.v0.utils.struct import PetDietPlan, MonthlyDietPlan
 
 
-async def call_model(state: State) -> Command[Literal["tools", "subagent", "structure_report"]]:
-    run_time = get_runtime(Context)
+async def call_model(state: State, config: RunnableConfig) -> Command[Literal["tools", "subagent", "structure_report"]]:
+    ctx = resolve_v0_context(config)
     has_plan = bool(state.get("plan"))
 
     # 首次调用（无 plan）时发送"正在创建计划"进度
@@ -34,7 +36,7 @@ async def call_model(state: State) -> Command[Literal["tools", "subagent", "stru
         )
 
     model = load_chat_model(
-        model=run_time.context.plan_model,
+        model=ctx.plan_model,
         **{
             "max_retries": 3,
             # "enable_thinking" : True,  # 在使用智谱的时候不用这个配置项
@@ -43,7 +45,7 @@ async def call_model(state: State) -> Command[Literal["tools", "subagent", "stru
     if has_plan:
         # 如果已经制定了计划了，就不使用thinking
         model = load_chat_model(
-            model=run_time.context.plan_model,
+            model=ctx.plan_model,
             **{
                 "max_retries": 3
             }
@@ -51,7 +53,8 @@ async def call_model(state: State) -> Command[Literal["tools", "subagent", "stru
 
     tools = [
         write_plan,
-        update_plan,
+        read_plan_tool,
+        finish_sub_plan,
         transfor_task_to_subagent,
         ls,
         query_note,
@@ -60,14 +63,14 @@ async def call_model(state: State) -> Command[Literal["tools", "subagent", "stru
     messages = state["messages"]
     info = state["pet_information"]
     response = await bind_model.ainvoke(
-        [SystemMessage(content=run_time.context.plan_prompt.format(
+        [SystemMessage(content=ctx.plan_prompt.format(
             pet_information=info,
         )), *messages]
     )
 
-    if has_tool_calling(cast(AIMessage, response)):
+    if has_tool_calling(response):
         name, args = parse_tool_calling(
-            cast(AIMessage, response), first_tool_call_only=True
+            response, first_tool_call_only=True
         )
 
         # 根据工具调用类型发送对应进度事件
@@ -78,7 +81,7 @@ async def call_model(state: State) -> Command[Literal["tools", "subagent", "stru
                 node="call_model",
                 progress=10,
             )
-        elif name == "update_plan":
+        elif name == "finish_sub_plan":
             progress = _estimate_progress(state)
             emit_progress(
                 ProgressEventType.PLAN_UPDATED,
@@ -127,9 +130,6 @@ async def call_model(state: State) -> Command[Literal["tools", "subagent", "stru
     )
 
 
-
-
-
 def _estimate_progress(state: State) -> int:
     """根据 plan 完成情况估算当前进度 (10-80%)"""
     plan = state.get("plan")
@@ -163,4 +163,4 @@ async def gather(state: State):
     }
 
 
-tool_node = ToolNode([write_plan, update_plan, ls, query_note])
+tool_node = ToolNode([write_plan, read_plan_tool, finish_sub_plan, ls, query_note])

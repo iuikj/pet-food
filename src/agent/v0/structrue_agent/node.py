@@ -1,25 +1,26 @@
 from typing import Literal
 
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_dev_utils import load_chat_model
-from langgraph.runtime import get_runtime
+from langchain_core.runnables import RunnableConfig
+from langchain_dev_utils.chat_models import load_chat_model
 from langgraph.types import Command
 
 from src.agent.v0.stream_events import ProgressEventType, emit_progress
 from src.agent.v0.structrue_agent.state import StructState
-from src.agent.v0.utils.context import Context
+from src.agent.v0.utils.context import resolve_v0_context
 from src.agent.v0.utils.struct import WeeklyDietPlan
 
 
-async def structure_report(state: StructState)-> Command[Literal["__end__","structure_report"]]:
+async def structure_report(state: StructState, config: RunnableConfig) -> Command[Literal["__end__", "structure_report"]]:
     """
     将deep agent所产出的结果（note），转换成结构化的信息来解析
     :param state:
+    :param config:
     :return:
     """
-    run_time = get_runtime(Context)
+    ctx = resolve_v0_context(config)
     model = load_chat_model(
-        model=run_time.context.report_model,
+        model=ctx.report_model,
         **{
             "max_retries": 3
         }
@@ -41,7 +42,7 @@ async def structure_report(state: StructState)-> Command[Literal["__end__","stru
             )
             response = await structure_model.ainvoke(
                 [
-                    SystemMessage(content=run_time.context.report_prompt),
+                    SystemMessage(content=ctx.report_prompt),
                     HumanMessage(content=state["failed_reason"]),
                 ]
             )
@@ -53,7 +54,7 @@ async def structure_report(state: StructState)-> Command[Literal["__end__","stru
             )
             response = await structure_model.ainvoke(
                 [
-                    SystemMessage(content=run_time.context.report_prompt),
+                    SystemMessage(content=ctx.report_prompt),
                     HumanMessage(content=state["temp_note"].content),
                 ]
             )

@@ -10,9 +10,11 @@ import logging
 from typing import Literal, cast
 
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
-from langchain_dev_utils import has_tool_calling, load_chat_model, parse_tool_calling, message_format
+from langchain_core.runnables import RunnableConfig
+from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
+from langchain_dev_utils.chat_models import load_chat_model
+from src.agent.v0.utils.format import message_format
 from langgraph.prebuilt import ToolNode
-from langgraph.runtime import get_runtime
 from langgraph.types import Command, Send
 
 from src.agent.v0.entity.note import Note
@@ -22,14 +24,15 @@ from src.agent.v1.models import CoordinationGuide
 from src.agent.v1.state import StateV1
 from src.utils.strtuct import PetInformation
 from src.agent.v1.tools import (
-    write_plan,
-    update_plan,
-    transfor_task_to_subagent,
     ls,
     query_note,
+    transfor_task_to_subagent,
+    finish_sub_plan,
+    read_plan_tool,
+    write_plan,
     finalize_research,
 )
-from src.agent.v1.utils.context import ContextV1
+from src.agent.v1.utils.context import ContextV1, resolve_context
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +43,10 @@ logger = logging.getLogger(__name__)
 
 async def research_planner(
     state: StateV1,
+    config: RunnableConfig,
 ) -> Command[Literal["research_tools", "research_subagent", "dispatch_weeks"]]:
     """研究阶段核心节点：调研循环 + finalize 触发协调指南生成"""
-    run_time = get_runtime(ContextV1)
+    ctx = resolve_context(config)
     has_plan = bool(state.get("plan"))
 
     if not has_plan:
@@ -55,17 +59,17 @@ async def research_planner(
 
     # 加载模型
     model = load_chat_model(
-        model=run_time.context.plan_model,
+        model=ctx.plan_model,
         max_retries=3,
     )
 
     tools = [
         write_plan,
-        update_plan,
+        read_plan_tool,
+        finish_sub_plan,
         transfor_task_to_subagent,
         ls,
         query_note,
-        finalize_research,
     ]
     bind_model = model.bind_tools(tools, parallel_tool_calls=False)
 
@@ -75,7 +79,7 @@ async def research_planner(
     response = await bind_model.ainvoke(
         [
             SystemMessage(
-                content=run_time.context.research_planner_prompt.format(
+                content=ctx.research_planner_prompt.format(
                     pet_information=info,
                 )
             ),
@@ -83,33 +87,28 @@ async def research_planner(
         ]
     )
 
-    if has_tool_calling(cast(AIMessage, response)):
+    if has_tool_calling(response):
         name, args = parse_tool_calling(
-            cast(AIMessage, response), first_tool_call_only=True
+            response, first_tool_call_only=True
         )
 
-        # ── finalize_research: 结束研究，生成协调指南 ──
-        if name == "finalize_research":
+        # ── finish_sub_plan 后仍需检查是否所有任务完成 ──
+        plan = state.get("plan", [])
+        all_done = len(plan) > 0 and all(getattr(item, "status", None) == "done" for item in plan)
+
+        if all_done:
+            # 所有研究任务完成，生成协调指南
             emit_progress(
                 ProgressEventType.RESEARCH_FINALIZING,
                 "研究完成，正在生成四周差异化协调指南...",
                 node="research_planner",
                 progress=25,
             )
-
-            # 先执行 finalize_research 工具以获取 ToolMessage
-            tool_node_temp = ToolNode([finalize_research])
-            tool_result = await tool_node_temp.ainvoke(
-                {"messages": [response]}
-            )
-
-            # 生成 CoordinationGuide
-            coordination_guide = await _generate_coordination_guide(state, run_time)
-
+            coordination_guide = await _generate_coordination_guide(state, ctx)
             return Command(
                 goto="dispatch_weeks",
                 update={
-                    "messages": [response, *tool_result["messages"]],
+                    "messages": [response],
                     "coordination_guide": coordination_guide,
                 },
             )
@@ -137,7 +136,7 @@ async def research_planner(
                 },
             )
 
-        # ── 其他工具（write_plan, update_plan, ls, query_note）──
+        # ── 其他工具（write_plan, finish_sub_plan, ls, query_note）──
         if name == "write_plan":
             emit_progress(
                 ProgressEventType.PLAN_CREATED,
@@ -145,7 +144,7 @@ async def research_planner(
                 node="research_planner",
                 progress=5,
             )
-        elif name == "update_plan":
+        elif name == "finish_sub_plan":
             emit_progress(
                 ProgressEventType.PLAN_UPDATED,
                 "研究任务进度已更新",
@@ -162,7 +161,7 @@ async def research_planner(
         node="research_planner",
         progress=25,
     )
-    coordination_guide = await _generate_coordination_guide(state, run_time)
+    coordination_guide = await _generate_coordination_guide(state, ctx)
     return Command(
         goto="dispatch_weeks",
         update={
@@ -172,7 +171,7 @@ async def research_planner(
     )
 
 
-async def _generate_coordination_guide(state: StateV1, run_time) -> CoordinationGuide:
+async def _generate_coordination_guide(state: StateV1, ctx) -> CoordinationGuide:
     """基于研究笔记生成 CoordinationGuide"""
     notes: dict[str, Note] = state.get("note") or {}
 
@@ -187,7 +186,7 @@ async def _generate_coordination_guide(state: StateV1, run_time) -> Coordination
     info = state["pet_information"]
 
     model = load_chat_model(
-        model=run_time.context.plan_model,
+        model=ctx.plan_model,
         max_retries=3,
     )
     guide_model = model.with_structured_output(CoordinationGuide)
@@ -195,7 +194,7 @@ async def _generate_coordination_guide(state: StateV1, run_time) -> Coordination
     guide = await guide_model.ainvoke(
         [
             SystemMessage(
-                content=run_time.context.coordination_guide_prompt.format(
+                content=ctx.coordination_guide_prompt.format(
                     pet_information=info,
                     research_notes=research_notes_text,
                 )
@@ -317,4 +316,4 @@ async def gather(state: StateV1):
 
 
 # ── 工具执行节点 ──
-research_tools = ToolNode([write_plan, update_plan, ls, query_note])
+research_tools = ToolNode([write_plan, read_plan_tool, finish_sub_plan, ls, query_note])

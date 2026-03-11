@@ -8,13 +8,11 @@ dependencies = [
     "langchain>=0.3.27",
     "langchain-community>=0.3.31",
     "langchain-deepseek>=0.1.4",
-    "langchain-dev-utils>=0.1.0",
     "langchain-milvus>=0.2.1",
     "langchain-qwq>=0.2.1",
     "langchain-siliconflow>=0.1.3",
     "langchain-tavily>=0.2.11",
-    "langgraph>=0.6.6",
-    "langgraph-cli[inmem]>=0.3.8",
+    "langgraph-cli[inmem]>=0.4.14",
     "python-dotenv>=1.1.1",
     # FastAPI 和 Web 服务器
     "fastapi>=0.115.0",
@@ -31,10 +29,15 @@ dependencies = [
     "redis>=5.2.1",
     # HTTP 客户端
     "httpx>=0.28.1",
+    # AG-UI 协议（CopilotKit / LangGraph 集成）
+    "ag-ui-langgraph>=0.0.25",
     # 邮件发送
     "aiosmtplib>=3.0.2",
     # 邮箱验证
     "pydantic[email]>=2.11.9",
+    "copilotkit>=0.1.78",
+    "langgraph>=1.0.10",
+    "langchain-dev-utils>=1.4.6",
 ]
 
 [dependency-groups]
