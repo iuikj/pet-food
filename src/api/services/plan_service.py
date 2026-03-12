@@ -15,7 +15,7 @@ from langgraph.graph.state import CompiledStateGraph
 from src.db.session import AsyncSessionLocal
 from src.api.services.task_service import TaskService
 from src.api.services.pet_service import PetService
-from src.api.utils.stream import stream_langgraph_execution, create_sse_event
+from src.api.utils.stream import stream_langgraph_execution, create_sse_event, stream_with_heartbeat
 from src.agent.v1.graph import build_v1_graph
 from src.agent.v1.utils.context import ContextV1
 from src.utils.strtuct import PetInformation
@@ -109,10 +109,16 @@ class PlanService:
             inputs, context = self._prepare_inputs(pet_info)
 
             # 流式执行 —— 通过 final_output 收集累积状态
+            # 使用心跳包裹器防止长时间无事件导致连接断开
             final_output: Dict[str, Any] = {}
-            async for event in stream_langgraph_execution(
+            raw_events = stream_langgraph_execution(
                 graph, inputs, config, final_output, context=context
-            ):
+            )
+            async for event in stream_with_heartbeat(raw_events):
+                # 心跳注释行（以 : 开头）不含业务数据，直接转发即可
+                if event.startswith(":"):
+                    yield event
+                    continue
                 await self._update_task_progress_from_event(task_id, event)
                 logger.debug("SSE event: %s", event)
                 yield event
@@ -200,7 +206,10 @@ class PlanService:
                 "current_node": task.current_node or "",
             })
 
-            async for event in self._poll_task_progress(task_id, user_id):
+            # 轮询也使用心跳保活
+            async for event in stream_with_heartbeat(
+                self._poll_task_progress(task_id, user_id)
+            ):
                 yield event
 
         except Exception as e:

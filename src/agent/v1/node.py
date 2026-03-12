@@ -291,7 +291,7 @@ async def gather(state: StateV1):
         ProgressEventType.COMPLETED,
         f"月度饮食计划生成完成！共 {len(weekly_plans)} 周计划",
         node="gather",
-        detail={"total_weeks": len(weekly_plans)},
+        detail={"plans": weekly_plans},
         progress=100,
     )
 

@@ -2,14 +2,77 @@
 流式输出工具
 支持 SSE (Server-Sent Events) 格式输出 LangGraph 执行过程
 使用 astream(stream_mode=["custom", "updates"]) 消费业务级 ProgressEvent
+
+心跳机制：通过 SSE 注释行 (`: heartbeat`) 保持连接活跃，
+防止客户端/代理/Nginx 因空闲超时断开长连接。
 """
 import json
+import asyncio
 import logging
 from typing import AsyncGenerator, Dict, Any
 from datetime import datetime, timezone
 from langgraph.graph.state import CompiledStateGraph
 
 logger = logging.getLogger(__name__)
+
+# SSE 心跳间隔（秒）— 必须小于 Nginx proxy_read_timeout（默认 60s）
+HEARTBEAT_INTERVAL = 15
+
+
+async def stream_with_heartbeat(
+    event_gen: AsyncGenerator[str, None],
+    interval: float = HEARTBEAT_INTERVAL,
+) -> AsyncGenerator[str, None]:
+    """
+    为异步事件生成器添加心跳保活。
+
+    使用 asyncio.Queue + 后台生产者模式：
+    - 生产者从 event_gen 读取真实事件放入队列
+    - 消费者从队列读取，超时时发送 SSE 注释心跳
+
+    SSE 注释格式 `: heartbeat\\n\\n` 符合规范，客户端应忽略。
+
+    Args:
+        event_gen: 原始 SSE 事件异步生成器
+        interval: 心跳间隔秒数
+
+    Yields:
+        SSE 事件字符串（真实事件或心跳注释）
+    """
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def _producer():
+        try:
+            async for event in event_gen:
+                await queue.put(event)
+        except Exception as e:
+            # 生产者异常：将错误事件放入队列
+            await queue.put(create_sse_event({
+                "type": "error",
+                "error": str(e),
+                "timestamp": _get_timestamp(),
+            }))
+        finally:
+            await queue.put(None)  # 哨兵值，标记流结束
+
+    producer_task = asyncio.create_task(_producer())
+
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=interval)
+                if item is None:
+                    break
+                yield item
+            except asyncio.TimeoutError:
+                # 超时未收到事件 → 发送心跳保活
+                yield ": heartbeat\n\n"
+    finally:
+        producer_task.cancel()
+        try:
+            await producer_task
+        except asyncio.CancelledError:
+            pass
 
 
 async def stream_langgraph_execution(
