@@ -257,10 +257,12 @@ async def list_diet_plans(
             DietPlanSummaryResponse(
                 id=plan.id,
                 task_id=plan.task_id,
+                pet_id=plan.pet_id,
                 pet_type=PetType(plan.pet_type),
                 pet_breed=plan.pet_breed,
                 pet_age=plan.pet_age,
                 pet_weight=plan.pet_weight,
+                health_status=plan.health_status,
                 created_at=plan.created_at,
                 updated_at=plan.updated_at,
             )

@@ -153,10 +153,12 @@ class DietPlanSummaryResponse(BaseModel):
     """饮食计划摘要响应"""
     id: str = Field(..., description="计划 ID")
     task_id: Optional[str] = Field(None, description="关联任务 ID")
+    pet_id: Optional[str] = Field(None, description="关联宠物 ID")
     pet_type: PetType = Field(..., description="宠物类型")
     pet_breed: Optional[str] = Field(None, description="宠物品种")
     pet_age: int = Field(..., gt=0, description="宠物年龄（月）")
     pet_weight: float = Field(..., gt=0, description="宠物体重（千克）")
+    health_status: Optional[str] = Field(None, description="健康状况描述")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: Optional[datetime] = Field(None, description="更新时间")
 

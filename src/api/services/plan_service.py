@@ -125,7 +125,7 @@ class PlanService:
 
             # 流式结束后持久化（无需再调用 ainvoke）
             await self.task_service.complete_task(task_id, final_output)
-            await self._save_diet_plan(
+            plan_id = await self._save_diet_plan(
                 db=self.db,
                 user_id=user_id,
                 task_id=task_id,
@@ -133,7 +133,7 @@ class PlanService:
                 result=final_output,
             )
 
-            yield create_sse_event({"type": "task_completed", "task_id": task_id})
+            yield create_sse_event({"type": "task_completed", "task_id": task_id, "plan_id": plan_id})
 
         except Exception as e:
             logger.error("流式饮食计划执行失败: %s", e, exc_info=True)
@@ -377,7 +377,7 @@ class PlanService:
         task_id: str,
         pet_info: Dict[str, Any],
         result: Dict[str, Any],
-    ):
+    ) -> str:
         """
         保存饮食计划到数据库
 
@@ -389,6 +389,9 @@ class PlanService:
             task_id: 任务 ID
             pet_info: 宠物信息
             result: LangGraph 执行结果
+
+        Returns:
+            plan_id: 新创建的饮食计划 ID
         """
         from src.db.models import DietPlan
 
@@ -396,8 +399,9 @@ class PlanService:
         if hasattr(report, "model_dump"):
             report = report.model_dump()
 
+        plan_id = str(uuid.uuid4())
         diet_plan = DietPlan(
-            id=str(uuid.uuid4()),
+            id=plan_id,
             user_id=user_id,
             task_id=task_id,
             pet_id=pet_info.get("pet_id"),
@@ -412,3 +416,4 @@ class PlanService:
 
         db.add(diet_plan)
         await db.commit()
+        return plan_id
