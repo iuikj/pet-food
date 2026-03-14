@@ -9,12 +9,20 @@ from typing import Dict, Any, AsyncGenerator
 from datetime import datetime, timezone
 import uuid
 
+from fastapi import HTTPException
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from langgraph.graph.state import CompiledStateGraph
 
 from src.db.session import AsyncSessionLocal
 from src.api.services.task_service import TaskService
 from src.api.services.pet_service import PetService
+from src.api.models.response import (
+    DietPlanDetailResponse,
+    DietPlanListResponse,
+    DietPlanSummaryResponse,
+    PetType as ResponsePetType,
+)
 from src.api.utils.stream import stream_langgraph_execution, create_sse_event, stream_with_heartbeat
 from src.agent.v1.graph import build_v1_graph
 from src.agent.v1.utils.context import ContextV1
@@ -65,6 +73,112 @@ class PlanService:
             "status": task.status,
             "message": "任务已创建，正在执行中",
         }
+
+    async def list_diet_plans(
+        self,
+        *,
+        user_id: str,
+        pet_type: str | None = None,
+        page: int = 1,
+        page_size: int = 10,
+    ) -> DietPlanListResponse:
+        from src.db.models import DietPlan
+
+        query = select(DietPlan).where(DietPlan.user_id == user_id)
+        if pet_type:
+            query = query.where(DietPlan.pet_type == pet_type)
+
+        total_query = select(func.count()).select_from(query.subquery())
+        total = (await self.db.execute(total_query)).scalar_one()
+
+        offset = (page - 1) * page_size
+        plans_query = query.order_by(DietPlan.created_at.desc()).offset(offset).limit(page_size)
+        plans = (await self.db.execute(plans_query)).scalars().all()
+
+        items = [
+            DietPlanSummaryResponse(
+                id=plan.id,
+                task_id=plan.task_id,
+                pet_id=plan.pet_id,
+                pet_type=ResponsePetType(plan.pet_type),
+                pet_breed=plan.pet_breed,
+                pet_age=plan.pet_age,
+                pet_weight=float(plan.pet_weight),
+                health_status=plan.health_status,
+                created_at=plan.created_at,
+                updated_at=plan.updated_at,
+            )
+            for plan in plans
+        ]
+
+        return DietPlanListResponse(
+            total=total,
+            page=page,
+            page_size=page_size,
+            items=items,
+        )
+
+    async def get_diet_plan_detail(
+        self,
+        *,
+        plan_id: str,
+        user_id: str,
+    ) -> DietPlanDetailResponse:
+        from src.db.models import DietPlan
+
+        result = await self.db.execute(
+            select(DietPlan).where(
+                DietPlan.id == plan_id,
+                DietPlan.user_id == user_id,
+            )
+        )
+        plan = result.scalars().first()
+
+        if not plan:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": 404, "message": "饮食计划不存在", "detail": None},
+            )
+
+        return DietPlanDetailResponse(
+            id=plan.id,
+            task_id=plan.task_id,
+            user_id=plan.user_id,
+            pet_type=ResponsePetType(plan.pet_type),
+            pet_breed=plan.pet_breed,
+            pet_age=plan.pet_age,
+            pet_weight=float(plan.pet_weight),
+            health_status=plan.health_status,
+            plan_data=plan.plan_data or {},
+            created_at=plan.created_at,
+            updated_at=plan.updated_at,
+        )
+
+    async def delete_diet_plan(
+        self,
+        *,
+        plan_id: str,
+        user_id: str,
+    ) -> str:
+        from src.db.models import DietPlan
+
+        result = await self.db.execute(
+            select(DietPlan).where(
+                DietPlan.id == plan_id,
+                DietPlan.user_id == user_id,
+            )
+        )
+        plan = result.scalars().first()
+
+        if not plan:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": 404, "message": "饮食计划不存在", "detail": None},
+            )
+
+        await self.db.execute(delete(DietPlan).where(DietPlan.id == plan_id))
+        await self.db.commit()
+        return plan_id
 
     async def execute_diet_plan_stream(
         self,

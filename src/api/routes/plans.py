@@ -1,53 +1,35 @@
 """
-饮食计划路由
-处理饮食计划的创建、查询等请求
+Diet plan routes.
 """
-from typing import Dict, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_db_session
 from src.api.middleware.auth import get_current_user
 from src.api.models.request import CreatePlanRequest
-from src.utils.strtuct import PetType, PetInformation
 from src.api.models.response import (
     ApiResponse,
     CreateTaskResponse,
-    DietPlanListResponse,
     DietPlanDetailResponse,
+    DietPlanListResponse,
+    PetType,
 )
 from src.api.services.plan_service import PlanService
-from src.api.utils.errors import to_http_exception, APIException
+from src.api.utils.errors import APIException, to_http_exception
+from src.utils.strtuct import PetInformation
 
 router = APIRouter()
-
-
-# ──────────── 辅助函数 ────────────
 
 
 async def _resolve_pet_info(
     plan_service: PlanService,
     request: CreatePlanRequest,
     user_id: str,
-) -> Dict[str, Any]:
-    """
-    从请求中解析宠物信息
-
-    优先使用 pet_id 从数据库获取，否则从请求字段直接构造。
-
-    Args:
-        plan_service: 计划服务实例
-        request: 创建计划请求
-        user_id: 当前用户 ID
-
-    Returns:
-        宠物信息字典
-
-    Raises:
-        HTTPException: 宠物不存在
-    """
+) -> dict[str, Any]:
     if request.pet_id:
         pet_info = await plan_service.pet_service.get_pet_for_plan(
             user_id=user_id,
@@ -69,31 +51,15 @@ async def _resolve_pet_info(
     ).model_dump()
 
 
-# ──────────── 路由 ────────────
-
-
 @router.post("/", response_model=ApiResponse[CreateTaskResponse], summary="创建饮食计划")
 async def create_diet_plan(
     request: CreatePlanRequest,
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """
-    创建饮食计划（异步模式）
-
-    创建任务后立即返回任务 ID，可以通过轮询查询进度
-
-    - **pet_id**: 宠物 ID（优先使用，从 Pet 表获取信息）
-    - **pet_type**: 宠物类型 cat/dog（当没有 pet_id 时使用）
-    - **pet_breed**: 宠物品种（可选）
-    - **pet_age**: 宠物年龄（月）（当没有 pet_id 时使用）
-    - **pet_weight**: 宠物体重（千克）（当没有 pet_id 时使用）
-    - **health_status**: 健康状况描述（可选）
-    """
     try:
         plan_service = PlanService(db)
         pet_info = await _resolve_pet_info(plan_service, request, current_user_id)
-
         result = await plan_service.create_diet_plan(
             user_id=current_user_id,
             pet_info=pet_info,
@@ -108,15 +74,14 @@ async def create_diet_plan(
                 message="任务创建成功，请使用任务 ID 查询进度",
             ),
         )
-
-    except APIException as e:
-        raise to_http_exception(e)
+    except APIException as exc:
+        raise to_http_exception(exc)
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": -1, "message": "创建任务失败", "detail": str(e)},
+            detail={"code": -1, "message": "创建任务失败", "detail": str(exc)},
         )
 
 
@@ -126,26 +91,6 @@ async def create_diet_plan_stream(
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """
-    创建饮食计划（流式模式）
-
-    使用 SSE (Server-Sent Events) 实时推送执行过程
-
-    - **pet_id**: 宠物 ID（优先使用）
-    - **pet_type**: 宠物类型 cat/dog（当没有 pet_id 时使用）
-    - **pet_breed**: 宠物品种（可选）
-    - **pet_age**: 宠物年龄（月）（当没有 pet_id 时使用）
-    - **pet_weight**: 宠物体重（千克）（当没有 pet_id 时使用）
-    - **health_status**: 健康状况描述（可选）
-
-    返回 SSE 事件流，包含：
-    - task_created: 任务创建
-    - progress_event: 业务级进度事件 (ProgressEvent)
-    - node_completed: 节点执行完成
-    - final_result: 最终报告
-    - task_completed: 任务完成
-    - error: 错误
-    """
     try:
         plan_service = PlanService(db)
         pet_info = await _resolve_pet_info(plan_service, request, current_user_id)
@@ -159,40 +104,28 @@ async def create_diet_plan_stream(
             headers={
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+                "X-Accel-Buffering": "no",
             },
         )
-
-    except APIException as e:
-        raise to_http_exception(e)
+    except APIException as exc:
+        raise to_http_exception(exc)
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": -1, "message": "流式执行失败", "detail": str(e)},
+            detail={"code": -1, "message": "流式执行失败", "detail": str(exc)},
         )
 
 
-@router.get("/stream", summary="恢复流式连接（重连）")
+@router.get("/stream", summary="恢复流式连接")
 async def resume_diet_plan_stream(
     task_id: str = Query(..., description="任务 ID"),
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """
-    恢复流式连接（断线重连）
-
-    通过 task_id 恢复 SSE 连接：
-    - 任务已完成：返回 task_completed 及结果
-    - 任务已失败/取消：返回 error
-    - 任务运行中：返回 resumed 后持续轮询推送进度
-
-    - **task_id**: 已创建的任务 ID
-    """
     try:
         plan_service = PlanService(db)
-
         return StreamingResponse(
             plan_service.resume_diet_plan_stream(
                 user_id=current_user_id,
@@ -205,11 +138,10 @@ async def resume_diet_plan_stream(
                 "X-Accel-Buffering": "no",
             },
         )
-
-    except Exception as e:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": -1, "message": "恢复连接失败", "detail": str(e)},
+            detail={"code": -1, "message": "恢复连接失败", "detail": str(exc)},
         )
 
 
@@ -219,15 +151,6 @@ async def confirm_diet_plan(
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """
-    确认保存饮食计划（从 Redis 临时存储转正到 PostgreSQL）
-
-    流式生成完成后，计划数据暂存于 Redis（24h TTL）。
-    用户点击"保存食谱"后调用此接口将数据持久化。
-    未确认的计划将在 24h 后自动过期。
-
-    - **plan_id**: 由 SSE task_completed 事件返回的计划 ID
-    """
     try:
         service = PlanService(db)
         saved_id = await service.confirm_diet_plan(plan_id, current_user_id)
@@ -238,10 +161,10 @@ async def confirm_diet_plan(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": -1, "message": "确认保存失败", "detail": str(e)},
+            detail={"code": -1, "message": "确认保存失败", "detail": str(exc)},
         )
 
 
@@ -253,69 +176,25 @@ async def list_diet_plans(
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """
-    获取当前用户的饮食计划列表
-
-    - **pet_type**: 宠物类型筛选（可选）：cat, dog
-    - **page**: 页码（默认 1）
-    - **page_size**: 每页大小（默认 10，最大 100）
-
-    返回计划摘要列表
-    """
     try:
-        from src.db.models import DietPlan
-        from sqlalchemy import select, func
-
-        # 构建查询
-        query = select(DietPlan).where(DietPlan.user_id == current_user_id)
-        if pet_type:
-            query = query.where(DietPlan.pet_type == pet_type.value)
-
-        # 获取总数
-        count_query = select(func.count()).select_from(query.alias())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar()
-
-        # 分页查询
-        offset = (page - 1) * page_size
-        query = query.order_by(DietPlan.created_at.desc()).offset(offset).limit(page_size)
-        result = await db.execute(query)
-        plans = result.scalars().all()
-
-        # 转换为响应模型
-        from src.api.models.response import DietPlanSummaryResponse
-
-        items = [
-            DietPlanSummaryResponse(
-                id=plan.id,
-                task_id=plan.task_id,
-                pet_id=plan.pet_id,
-                pet_type=PetType(plan.pet_type),
-                pet_breed=plan.pet_breed,
-                pet_age=plan.pet_age,
-                pet_weight=plan.pet_weight,
-                health_status=plan.health_status,
-                created_at=plan.created_at,
-                updated_at=plan.updated_at,
-            )
-            for plan in plans
-        ]
-
+        plan_service = PlanService(db)
+        result = await plan_service.list_diet_plans(
+            user_id=current_user_id,
+            pet_type=pet_type.value if pet_type else None,
+            page=page,
+            page_size=page_size,
+        )
         return ApiResponse(
             code=0,
             message="获取成功",
-            data=DietPlanListResponse(
-                total=total,
-                page=page,
-                page_size=page_size,
-                items=items,
-            ),
+            data=result,
         )
-
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": -1, "message": "获取列表失败", "detail": str(e)},
+            detail={"code": -1, "message": "获取列表失败", "detail": str(exc)},
         )
 
 
@@ -325,55 +204,23 @@ async def get_diet_plan(
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """
-    获取指定饮食计划的详细信息
-
-    - **plan_id**: 计划 ID
-
-    返回完整的饮食计划数据
-    """
     try:
-        from src.db.models import DietPlan
-        from sqlalchemy import select
-
-        result = await db.execute(
-            select(DietPlan).where(
-                DietPlan.id == plan_id,
-                DietPlan.user_id == current_user_id,
-            )
+        plan_service = PlanService(db)
+        result = await plan_service.get_diet_plan_detail(
+            plan_id=plan_id,
+            user_id=current_user_id,
         )
-        plan = result.scalars().first()
-
-        if not plan:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": 404, "message": "饮食计划不存在", "detail": None},
-            )
-
         return ApiResponse(
             code=0,
             message="获取成功",
-            data=DietPlanDetailResponse(
-                id=plan.id,
-                task_id=plan.task_id,
-                user_id=plan.user_id,
-                pet_type=PetType(plan.pet_type),
-                pet_breed=plan.pet_breed,
-                pet_age=plan.pet_age,
-                pet_weight=plan.pet_weight,
-                health_status=plan.health_status,
-                plan_data=plan.plan_data or {},
-                created_at=plan.created_at,
-                updated_at=plan.updated_at,
-            ),
+            data=result,
         )
-
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": -1, "message": "获取详情失败", "detail": str(e)},
+            detail={"code": -1, "message": "获取详情失败", "detail": str(exc)},
         )
 
 
@@ -383,45 +230,22 @@ async def delete_diet_plan(
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """
-    删除指定的饮食计划
-
-    - **plan_id**: 计划 ID
-
-    注意：删除后无法恢复
-    """
     try:
-        from src.db.models import DietPlan
-        from sqlalchemy import select, delete
-
-        result = await db.execute(
-            select(DietPlan).where(
-                DietPlan.id == plan_id,
-                DietPlan.user_id == current_user_id,
-            )
+        plan_service = PlanService(db)
+        deleted_plan_id = await plan_service.delete_diet_plan(
+            plan_id=plan_id,
+            user_id=current_user_id,
         )
-        plan = result.scalars().first()
-
-        if not plan:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": 404, "message": "饮食计划不存在", "detail": None},
-            )
-
-        await db.execute(delete(DietPlan).where(DietPlan.id == plan_id))
-        await db.commit()
-
         return ApiResponse(
             code=0,
             message="删除成功",
-            data={"plan_id": plan_id},
+            data={"plan_id": deleted_plan_id},
         )
-
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": -1, "message": "删除失败", "detail": str(e)},
+            detail={"code": -1, "message": "删除失败", "detail": str(exc)},
         )
