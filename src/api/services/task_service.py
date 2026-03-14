@@ -294,6 +294,7 @@ class TaskService:
         self,
         user_id: str,
         status: Optional[str] = None,
+        task_type: Optional[str] = None,
         page: int = 1,
         page_size: int = 10
     ) -> TaskListResponse:
@@ -314,6 +315,8 @@ class TaskService:
 
         if status:
             query = query.where(Task.status == status)
+        if task_type:
+            query = query.where(Task.task_type == task_type)
 
         # 获取总数
         count_query = select(func.count()).select_from(query.subquery())

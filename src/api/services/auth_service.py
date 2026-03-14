@@ -36,6 +36,9 @@ class AuthService:
             nickname=user.nickname,
             phone=user.phone,
             avatar_url=user.avatar_url,
+            is_pro=user.is_pro,
+            plan_type=user.plan_type,
+            subscription_expired_at=user.subscription_expired_at,
             is_active=user.is_active,
             is_superuser=user.is_superuser,
             created_at=user.created_at

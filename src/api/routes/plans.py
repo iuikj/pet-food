@@ -213,6 +213,38 @@ async def resume_diet_plan_stream(
         )
 
 
+@router.post("/{plan_id}/confirm", response_model=ApiResponse[dict], summary="确认保存饮食计划")
+async def confirm_diet_plan(
+    plan_id: str,
+    current_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    确认保存饮食计划（从 Redis 临时存储转正到 PostgreSQL）
+
+    流式生成完成后，计划数据暂存于 Redis（24h TTL）。
+    用户点击"保存食谱"后调用此接口将数据持久化。
+    未确认的计划将在 24h 后自动过期。
+
+    - **plan_id**: 由 SSE task_completed 事件返回的计划 ID
+    """
+    try:
+        service = PlanService(db)
+        saved_id = await service.confirm_diet_plan(plan_id, current_user_id)
+        return ApiResponse(
+            code=0,
+            message="保存成功",
+            data={"plan_id": saved_id},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": -1, "message": "确认保存失败", "detail": str(e)},
+        )
+
+
 @router.get("/", response_model=ApiResponse[DietPlanListResponse], summary="获取饮食计划列表")
 async def list_diet_plans(
     pet_type: PetType | None = Query(None, description="宠物类型筛选"),

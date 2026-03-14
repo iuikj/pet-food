@@ -74,8 +74,9 @@ class PlanService:
         """
         执行饮食计划生成（流式模式）
 
-        通过 astream(stream_mode=["custom", "updates"]) 执行图，
-        使用 final_output 收集最终状态用于持久化，避免二次 ainvoke。
+        通过 astream(stream_mode=["custom"]) 执行图，
+        使用 completed_data 截获 completed 事件中的计划数据，
+        流结束后存入 Redis 临时存储（24h TTL），用户确认后再持久化到 PostgreSQL。
 
         Args:
             user_id: 用户 ID
@@ -108,11 +109,11 @@ class PlanService:
 
             inputs, context = self._prepare_inputs(pet_info)
 
-            # 流式执行 —— 通过 final_output 收集累积状态
+            # 流式执行 —— 通过 completed_data 截获 completed 事件
             # 使用心跳包裹器防止长时间无事件导致连接断开
-            final_output: Dict[str, Any] = {}
+            completed_data: Dict[str, Any] = {}
             raw_events = stream_langgraph_execution(
-                graph, inputs, config, final_output, context=context
+                graph, inputs, config, completed_data=completed_data, context=context
             )
             async for event in stream_with_heartbeat(raw_events):
                 # 心跳注释行（以 : 开头）不含业务数据，直接转发即可
@@ -123,15 +124,10 @@ class PlanService:
                 logger.debug("SSE event: %s", event)
                 yield event
 
-            # 流式结束后持久化（无需再调用 ainvoke）
-            await self.task_service.complete_task(task_id, final_output)
-            plan_id = await self._save_diet_plan(
-                db=self.db,
-                user_id=user_id,
-                task_id=task_id,
-                pet_info=pet_info,
-                result=final_output,
-            )
+            # 流式结束后 → 存 Redis 临时存储（24h TTL）
+            await self.task_service.complete_task(task_id, completed_data)
+            plan_id = str(uuid.uuid4())
+            await self._save_temp_plan(plan_id, user_id, task_id, pet_info, completed_data)
 
             yield create_sse_event({"type": "task_completed", "task_id": task_id, "plan_id": plan_id})
 
@@ -350,8 +346,7 @@ class PlanService:
         """
         从 SSE 事件中提取进度并更新任务
 
-        支持 custom 模式的 ProgressEvent（含 progress 字段）
-        和 updates 模式的 node_completed 事件。
+        支持 custom 模式的 ProgressEvent（含 progress 字段）。
 
         Args:
             task_id: 任务 ID
@@ -369,6 +364,110 @@ class PlanService:
         except (json.JSONDecodeError, KeyError):
             pass
 
+    async def _save_temp_plan(
+        self,
+        plan_id: str,
+        user_id: str,
+        task_id: str,
+        pet_info: Dict[str, Any],
+        completed_data: Dict[str, Any],
+    ) -> None:
+        """
+        将计划数据存入 Redis 临时存储（24h TTL）
+
+        从 completed_data 中提取 plans 和 ai_suggestions，
+        构造 plan_data 结构后序列化存储。
+
+        Args:
+            plan_id: 计划 ID
+            user_id: 用户 ID
+            task_id: 任务 ID
+            pet_info: 宠物信息
+            completed_data: completed 事件数据（含 detail.plans + detail.ai_suggestions）
+        """
+        from src.db.redis import set_json
+
+        detail = completed_data.get("detail", {})
+        plans = detail.get("plans", [])
+        ai_suggestions = detail.get("ai_suggestions", "")
+
+        # 序列化 Pydantic 模型
+        serialized_plans = [
+            p.model_dump() if hasattr(p, "model_dump") else p for p in plans
+        ]
+
+        # 构造与 PetDietPlan 结构一致的 plan_data
+        pet_info_filtered = {
+            k: v for k, v in pet_info.items()
+            if k in PetInformation.model_fields
+        }
+
+        temp_data = {
+            "plan_id": plan_id,
+            "user_id": user_id,
+            "task_id": task_id,
+            "pet_info": pet_info,
+            "plan_data": {
+                "pet_information": pet_info_filtered,
+                "ai_suggestions": ai_suggestions,
+                "pet_diet_plan": {"monthly_diet_plan": serialized_plans},
+            },
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        success = await set_json(f"temp_plan:{plan_id}", temp_data, expire=86400)
+        if success:
+            logger.info("临时计划已存入 Redis: temp_plan:%s (TTL 24h)", plan_id)
+        else:
+            logger.error("临时计划存入 Redis 失败: temp_plan:%s", plan_id)
+
+    async def confirm_diet_plan(self, plan_id: str, user_id: str) -> str:
+        """
+        确认保存饮食计划：从 Redis 读取临时数据 → 写入 PostgreSQL → 删除 Redis 键
+
+        Args:
+            plan_id: 临时计划 ID
+            user_id: 当前用户 ID
+
+        Returns:
+            已保存的饮食计划 ID
+
+        Raises:
+            HTTPException: 计划不存在/已过期 或 无权限
+        """
+        from fastapi import HTTPException
+        from src.db.redis import get_json, get_redis
+
+        temp = await get_json(f"temp_plan:{plan_id}")
+        if not temp:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": 404, "message": "计划不存在或已过期", "detail": None},
+            )
+        if temp["user_id"] != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": 403, "message": "无权限操作此计划", "detail": None},
+            )
+
+        saved_id = await self._save_diet_plan(
+            db=self.db,
+            user_id=user_id,
+            task_id=temp["task_id"],
+            pet_info=temp["pet_info"],
+            plan_data=temp["plan_data"],
+        )
+
+        # 直接删除精确 key（比 scan_iter 模式匹配更高效）
+        try:
+            client = await get_redis()
+            await client.delete(f"temp_plan:{plan_id}")
+            logger.info("Redis 临时计划已删除: temp_plan:%s", plan_id)
+        except Exception as e:
+            logger.warning("删除 Redis 临时计划失败: %s", e)
+
+        return saved_id
+
     async def _save_diet_plan(
         self,
         *,
@@ -376,7 +475,8 @@ class PlanService:
         user_id: str,
         task_id: str,
         pet_info: Dict[str, Any],
-        result: Dict[str, Any],
+        result: Dict[str, Any] | None = None,
+        plan_data: Dict[str, Any] | None = None,
     ) -> str:
         """
         保存饮食计划到数据库
@@ -388,16 +488,20 @@ class PlanService:
             user_id: 用户 ID
             task_id: 任务 ID
             pet_info: 宠物信息
-            result: LangGraph 执行结果
+            result: LangGraph 执行结果（非流式后台模式使用）
+            plan_data: 已构造的计划数据（confirm 转正时直接传入）
 
         Returns:
             plan_id: 新创建的饮食计划 ID
         """
         from src.db.models import DietPlan
 
-        report = result.get("report", {})
-        if hasattr(report, "model_dump"):
-            report = report.model_dump()
+        if plan_data is None:
+            # 兼容非流式后台模式：从 result 中提取 report
+            report = (result or {}).get("report", {})
+            if hasattr(report, "model_dump"):
+                report = report.model_dump()
+            plan_data = report
 
         plan_id = str(uuid.uuid4())
         diet_plan = DietPlan(
@@ -410,7 +514,7 @@ class PlanService:
             pet_age=pet_info.get("pet_age", 0),
             pet_weight=pet_info.get("pet_weight", 0),
             health_status=pet_info.get("health_status"),
-            plan_data=report,
+            plan_data=plan_data,
             created_at=datetime.now(timezone.utc),
         )
 

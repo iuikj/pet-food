@@ -2,7 +2,7 @@
 任务管理路由
 处理任务状态查询、取消等操作
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_db_session
@@ -48,7 +48,7 @@ async def get_task_status(
         raise to_http_exception(e)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "code": -1,
                 "message": "获取任务状态失败",
@@ -59,7 +59,7 @@ async def get_task_status(
 
 @router.get("/", response_model=ApiResponse[TaskListResponse], summary="获取任务列表")
 async def list_tasks(
-    status: TaskStatus | None = None,
+    task_status: TaskStatus | None = Query(None, alias="status"),
     task_type: TaskType | None = None,
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(10, ge=1, le=100, description="每页大小"),
@@ -78,7 +78,7 @@ async def list_tasks(
         task_service = TaskService(db)
         result = await task_service.list_tasks(
             user_id=current_user_id,
-            status=status.value if status else None,
+            status=task_status.value if task_status else None,
             task_type=task_type.value if task_type else None,
             page=page,
             page_size=page_size
@@ -97,7 +97,7 @@ async def list_tasks(
 
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "code": -1,
                 "message": "获取任务列表失败",
@@ -136,7 +136,7 @@ async def cancel_task(
         raise to_http_exception(e)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "code": -1,
                 "message": "取消任务失败",
@@ -187,7 +187,7 @@ async def get_task_result(
         raise to_http_exception(e)
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
                 "code": -1,
                 "message": "获取任务结果失败",

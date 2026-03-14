@@ -287,17 +287,20 @@ async def gather(state: StateV1):
     """汇总所有 WeeklyDietPlan 生成最终报告"""
     weekly_plans = state.get("weekly_diet_plans", [])
 
+    # 生成 AI 建议摘要（在 emit_progress 之前计算，以便加入 detail）
+    messages = state.get("messages", [])
+    ai_suggestions = messages[-1].content if messages else "饮食计划已生成，请查看详细报告。"
+
     emit_progress(
         ProgressEventType.COMPLETED,
         f"月度饮食计划生成完成！共 {len(weekly_plans)} 周计划",
         node="gather",
-        detail={"plans": weekly_plans},
+        detail={
+            "plans": weekly_plans,
+            "ai_suggestions": ai_suggestions,
+        },
         progress=100,
     )
-
-    # 生成 AI 建议摘要
-    messages = state.get("messages", [])
-    ai_suggestions = messages[-1].content if messages else "饮食计划已生成，请查看详细报告。"
 
     # pet_information 可能在图执行过程中被序列化为 JSON 字符串，需要反序列化
     pet_info = state["pet_information"]
