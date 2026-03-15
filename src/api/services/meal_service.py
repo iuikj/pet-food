@@ -4,12 +4,39 @@
 处理餐食记录的 CRUD 操作和营养统计
 """
 import uuid
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime, date, timedelta
 from sqlalchemy import select, func, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import MealRecord, Pet, DietPlan
+
+
+FIXED_MICRO_PREFERRED_UNITS = {
+    "vitamin_a": "IU",
+    "vitamin_c": "mg",
+    "vitamin_d": "IU",
+    "calcium": "mg",
+    "iron": "mg",
+    "sodium": "mg",
+    "potassium": "mg",
+    "cholesterol": "mg",
+}
+
+LEGACY_FIXED_MICRO_UNITS = {
+    key: "mg" for key in FIXED_MICRO_PREFERRED_UNITS
+}
+
+LEGACY_ADDITIONAL_UNIT_HINTS = {
+    "omega_3": "g",
+    "dha": "g",
+    "epa": "g",
+    "vitamin_e": "mg",
+    "zinc": "mg",
+    "lutein": "mg",
+    "selenium": "ug",
+    "probiotics": "CFU",
+}
 
 
 class MealService:
@@ -68,19 +95,10 @@ class MealService:
                         "carbs": 0,
                         "fiber": 0
                     }
-                    micro_nutrients = {
-                        "vitamin_a": 0,
-                        "vitamin_c": 0,
-                        "vitamin_d": 0,
-                        "calcium": 0,
-                        "iron": 0,
-                        "sodium": 0,
-                        "potassium": 0,
-                        "cholesterol": 0
-                    }
+                    micro_nutrients = {}
+                    additional_micro_nutrients = {}
 
                     for item in food_items:
-                        weight = item.get("weight", 0)
                         macro = item.get("macro_nutrients", {})
                         micro = item.get("micro_nutrients", {})
 
@@ -93,19 +111,40 @@ class MealService:
                         macro_nutrients["carbs"] += macro.get("carbohydrates", 0)
                         macro_nutrients["fiber"] += macro.get("dietary_fiber", 0)
 
-                        micro_nutrients["vitamin_a"] += micro.get("vitamin_a", 0)
-                        micro_nutrients["vitamin_c"] += micro.get("vitamin_c", 0)
-                        micro_nutrients["vitamin_d"] += micro.get("vitamin_d", 0)
-                        micro_nutrients["calcium"] += micro.get("calcium", 0)
-                        micro_nutrients["iron"] += micro.get("iron", 0)
-                        micro_nutrients["sodium"] += micro.get("sodium", 0)
-                        micro_nutrients["potassium"] += micro.get("potassium", 0)
-                        micro_nutrients["cholesterol"] += micro.get("cholesterol", 0)
+                        for nutrient_name, preferred_unit in FIXED_MICRO_PREFERRED_UNITS.items():
+                            self._merge_nutrient_amount(
+                                micro_nutrients,
+                                nutrient_name,
+                                micro.get(nutrient_name),
+                                preferred_unit=preferred_unit,
+                                legacy_unit=LEGACY_FIXED_MICRO_UNITS[nutrient_name],
+                            )
+
+                        additional = micro.get("additional_nutrients", {})
+                        if isinstance(additional, dict):
+                            for nutrient_name, nutrient_value in additional.items():
+                                inferred_unit = self._infer_additional_unit(nutrient_name)
+                                self._merge_nutrient_amount(
+                                    additional_micro_nutrients,
+                                    nutrient_name,
+                                    nutrient_value,
+                                    preferred_unit=inferred_unit,
+                                    legacy_unit=inferred_unit,
+                                )
+
+                    for nutrient_name, preferred_unit in FIXED_MICRO_PREFERRED_UNITS.items():
+                        micro_nutrients.setdefault(
+                            nutrient_name,
+                            {"value": 0.0, "unit": preferred_unit},
+                        )
 
                     # 构造营养数据
                     nutrition_data = {
                         "macro_nutrients": macro_nutrients,
-                        "micro_nutrients": micro_nutrients,
+                        "micro_nutrients": {
+                            **micro_nutrients,
+                            "additional_nutrients": additional_micro_nutrients,
+                        },
                         "food_items": food_items,
                         "cook_method": meal.get("cook_method", ""),
                         "recommend_reason": meal.get("recommend_reason", "")
@@ -642,3 +681,60 @@ class MealService:
             "fat": fat_data,
             "carbs": carbs_data
         }
+
+    def _merge_nutrient_amount(
+        self,
+        totals: dict,
+        nutrient_name: str,
+        raw_value: Any,
+        preferred_unit: str,
+        legacy_unit: Optional[str] = None,
+    ) -> None:
+        normalized = self._normalize_nutrient_amount(
+            raw_value,
+            preferred_unit=preferred_unit,
+            legacy_unit=legacy_unit,
+        )
+        if normalized["value"] <= 0:
+            return
+
+        existing = totals.get(nutrient_name)
+        if existing is None:
+            totals[nutrient_name] = normalized
+            return
+
+        if existing.get("unit") == normalized["unit"]:
+            existing["value"] += normalized["value"]
+            return
+
+        fallback_name = f"{nutrient_name} ({normalized['unit']})"
+        fallback_existing = totals.get(fallback_name)
+        if fallback_existing is None:
+            totals[fallback_name] = normalized
+            return
+
+        fallback_existing["value"] += normalized["value"]
+
+    def _normalize_nutrient_amount(
+        self,
+        raw_value: Any,
+        preferred_unit: str,
+        legacy_unit: Optional[str] = None,
+    ) -> dict:
+        if isinstance(raw_value, dict):
+            amount = raw_value.get("value", 0) or 0
+            unit = raw_value.get("unit") or preferred_unit
+        else:
+            amount = raw_value or 0
+            unit = legacy_unit or preferred_unit
+
+        try:
+            numeric_amount = float(amount)
+        except (TypeError, ValueError):
+            numeric_amount = 0.0
+
+        return {"value": numeric_amount, "unit": unit}
+
+    def _infer_additional_unit(self, nutrient_name: str) -> str:
+        normalized_name = nutrient_name.strip().lower().replace("-", "_").replace(" ", "_")
+        return LEGACY_ADDITIONAL_UNIT_HINTS.get(normalized_name, "mg")
