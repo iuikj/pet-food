@@ -17,7 +17,7 @@ DIET_PLAN_OUTPUT_CONTRACT = """
 食谱输出契约：
 - `food_items[].weight` 必须使用克（g）。
 - 宏量营养素全部使用克（g）。
-- 固定微量营养素必须使用 `{ "value": 数值, "unit": "单位" }` 结构，禁止输出裸数字。
+- 固定微量营养素必须使用 `{{ "value": 数值, "unit": "单位" }}` 结构，禁止输出裸数字。
 - 固定微量营养素必须使用以下单位：
   - `vitamin_a`: `IU`
   - `vitamin_c`: `mg`
@@ -27,7 +27,7 @@ DIET_PLAN_OUTPUT_CONTRACT = """
   - `sodium`: `mg`
   - `potassium`: `mg`
   - `cholesterol`: `mg`
-- `additional_nutrients` 必须是对象，键是营养素名称，值同样是 `{ "value": 数值, "unit": "单位" }`。
+- `additional_nutrients` 必须是对象，键是营养素名称，值同样是 `{{ "value": 数值, "unit": "单位" }}`。
 - 常见 additional nutrient 单位：
   - `Omega-3` / `DHA` / `EPA`: `g`
   - `vitamin_e` / `zinc` / `lutein`: `mg`

@@ -143,8 +143,19 @@ def create_sse_event(data: Dict[str, Any]) -> str:
         SSE 格式字符串（"data: {json}\\n\\n"）
     """
     logger.debug("create_sse_event: %s", data)
-    json_str = json.dumps(data, ensure_ascii=False)
+    json_str = json.dumps(data, ensure_ascii=False, default=_json_default)
     return f"data: {json_str}\n\n"
+
+
+def _json_default(obj):
+    """json.dumps 的 default 处理器：兜底序列化 Pydantic 模型和其他非标准类型"""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if hasattr(obj, "dict"):
+        return obj.dict()
+    if hasattr(obj, "__dict__"):
+        return obj.__dict__
+    return str(obj)
 
 
 def _serialize_output(output: Any) -> Any:

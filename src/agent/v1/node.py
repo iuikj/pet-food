@@ -291,12 +291,18 @@ async def gather(state: StateV1):
     messages = state.get("messages", [])
     ai_suggestions = messages[-1].content if messages else "饮食计划已生成，请查看详细报告。"
 
+    # 预序列化 Pydantic 模型，避免 json.dumps 遇到模型实例抛 TypeError 导致流中断
+    serialized_plans = [
+        p.model_dump() if hasattr(p, "model_dump") else p
+        for p in weekly_plans
+    ]
+
     emit_progress(
         ProgressEventType.COMPLETED,
         f"月度饮食计划生成完成！共 {len(weekly_plans)} 周计划",
         node="gather",
         detail={
-            "plans": weekly_plans,
+            "plans": serialized_plans,
             "ai_suggestions": ai_suggestions,
         },
         progress=100,

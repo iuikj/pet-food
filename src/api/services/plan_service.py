@@ -34,10 +34,10 @@ logger = logging.getLogger(__name__)
 class PlanService:
     """饮食计划服务类"""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession | None):
         self.db = db
-        self.task_service = TaskService(db)
-        self.pet_service = PetService(db)
+        self.task_service = TaskService(db) if db else None
+        self.pet_service = PetService(db) if db else None
 
     # ──────────── 公共接口 ────────────
 
@@ -192,6 +192,9 @@ class PlanService:
         使用 completed_data 截获 completed 事件中的计划数据，
         流结束后存入 Redis 临时存储（24h TTL），用户确认后再持久化到 PostgreSQL。
 
+        注意：内部创建独立的 db session，避免长时间流式响应导致
+        依赖注入的 session 连接泄漏（GC 回收未归还连接）。
+
         Args:
             user_id: 用户 ID
             pet_info: 宠物信息字典
@@ -199,64 +202,69 @@ class PlanService:
         Yields:
             SSE 格式事件字符串
         """
-        task = await self.task_service.create_task(
-            user_id=user_id,
-            task_type="diet_plan",
-            input_data=pet_info,
-        )
-
-        # 提前缓存 task_id，避免 session 异常后无法访问 ORM 属性
-        task_id = task.id
-
-        yield create_sse_event({"type": "task_created", "task_id": task_id})
-
-        try:
-            graph = await self._build_graph()
-            config = {
-                "configurable": {
-                    "thread_id": task_id,
-                    "user_id": user_id,
-                }
-            }
-
-            await self.task_service.update_task_status(task_id, "running")
-
-            inputs, context = self._prepare_inputs(pet_info)
-
-            # 流式执行 —— 通过 completed_data 截获 completed 事件
-            # 使用心跳包裹器防止长时间无事件导致连接断开
-            completed_data: Dict[str, Any] = {}
-            raw_events = stream_langgraph_execution(
-                graph, inputs, config, completed_data=completed_data, context=context
+        # 使用独立 session：流式响应生命周期长达数分钟，
+        # 依赖注入的 session 在客户端断开时可能无法正确归还连接池。
+        async with AsyncSessionLocal() as stream_db:
+            task_service = TaskService(stream_db)
+            task = await task_service.create_task(
+                user_id=user_id,
+                task_type="diet_plan",
+                input_data=pet_info,
             )
-            async for event in stream_with_heartbeat(raw_events):
-                # 心跳注释行（以 : 开头）不含业务数据，直接转发即可
-                if event.startswith(":"):
+
+            # 提前缓存 task_id，避免 session 异常后无法访问 ORM 属性
+            task_id = task.id
+
+            yield create_sse_event({"type": "task_created", "task_id": task_id})
+
+            try:
+                graph = await self._build_graph()
+                config = {
+                    "configurable": {
+                        "thread_id": task_id,
+                        "user_id": user_id,
+                    }
+                }
+
+                await task_service.update_task_status(task_id, "running")
+
+                inputs, context = self._prepare_inputs(pet_info)
+
+                # 流式执行 —— 通过 completed_data 截获 completed 事件
+                # 使用心跳包裹器防止长时间无事件导致连接断开
+                completed_data: Dict[str, Any] = {}
+                raw_events = stream_langgraph_execution(
+                    graph, inputs, config, completed_data=completed_data, context=context
+                )
+                async for event in stream_with_heartbeat(raw_events):
+                    # 心跳注释行（以 : 开头）不含业务数据，直接转发即可
+                    if event.startswith(":"):
+                        yield event
+                        continue
+                    await self._update_task_progress_from_event(
+                        task_id, event, task_service=task_service
+                    )
+                    logger.debug("SSE event: %s", event)
                     yield event
-                    continue
-                await self._update_task_progress_from_event(task_id, event)
-                logger.debug("SSE event: %s", event)
-                yield event
 
-            # 流式结束后 → 存 Redis 临时存储（24h TTL）
-            await self.task_service.complete_task(task_id, completed_data)
-            plan_id = str(uuid.uuid4())
-            await self._save_temp_plan(plan_id, user_id, task_id, pet_info, completed_data)
+                # 流式结束后 → 存 Redis 临时存储（24h TTL）
+                await task_service.complete_task(task_id, completed_data)
+                plan_id = str(uuid.uuid4())
+                await self._save_temp_plan(plan_id, user_id, task_id, pet_info, completed_data)
 
-            yield create_sse_event({"type": "task_completed", "task_id": task_id, "plan_id": plan_id})
+                yield create_sse_event({"type": "task_completed", "task_id": task_id, "plan_id": plan_id})
 
-        except Exception as e:
-            logger.error("流式饮食计划执行失败: %s", e, exc_info=True)
-            # 先回滚脏事务，再标记任务失败
-            try:
-                await self.db.rollback()
-            except Exception:
-                pass
-            try:
-                await self.task_service.fail_task(task_id, str(e))
-            except Exception as fail_err:
-                logger.error("标记任务失败时出错: %s", fail_err)
-            yield create_sse_event({"type": "error", "error": str(e)})
+            except Exception as e:
+                logger.error("流式饮食计划执行失败: %s", e, exc_info=True)
+                try:
+                    await stream_db.rollback()
+                except Exception:
+                    pass
+                try:
+                    await task_service.fail_task(task_id, str(e))
+                except Exception as fail_err:
+                    logger.error("标记任务失败时出错: %s", fail_err)
+                yield create_sse_event({"type": "error", "error": str(e)})
 
     async def resume_diet_plan_stream(
         self,
@@ -273,6 +281,8 @@ class PlanService:
         注意：当前架构下图执行与 SSE 生成器绑定，SSE 断开后图也会被取消。
         因此 resume 主要用于客户端检查任务最终状态。
 
+        内部创建独立 db session，避免长时间轮询导致连接泄漏。
+
         Args:
             user_id: 用户 ID
             task_id: 任务 ID
@@ -280,50 +290,52 @@ class PlanService:
         Yields:
             SSE 格式事件字符串
         """
-        try:
-            task = await self.task_service.get_task(task_id, user_id)
+        async with AsyncSessionLocal() as stream_db:
+            task_service = TaskService(stream_db)
+            try:
+                task = await task_service.get_task(task_id, user_id)
 
-            if task.status == "completed":
+                if task.status == "completed":
+                    yield create_sse_event({
+                        "type": "task_completed",
+                        "task_id": task.id,
+                        "result": task.output_data or {},
+                    })
+                    return
+
+                if task.status == "failed":
+                    yield create_sse_event({
+                        "type": "error",
+                        "task_id": task.id,
+                        "error": task.error_message or "任务执行失败",
+                    })
+                    return
+
+                if task.status == "cancelled":
+                    yield create_sse_event({
+                        "type": "error",
+                        "task_id": task.id,
+                        "error": "任务已取消",
+                    })
+                    return
+
+                # running 或 pending：推送当前进度并轮询至终态
                 yield create_sse_event({
-                    "type": "task_completed",
+                    "type": "resumed",
                     "task_id": task.id,
-                    "result": task.output_data or {},
+                    "status": task.status,
+                    "progress": task.progress,
+                    "current_node": task.current_node or "",
                 })
-                return
 
-            if task.status == "failed":
-                yield create_sse_event({
-                    "type": "error",
-                    "task_id": task.id,
-                    "error": task.error_message or "任务执行失败",
-                })
-                return
+                # 轮询也使用心跳保活
+                async for event in stream_with_heartbeat(
+                    self._poll_task_progress(task_id, user_id, task_service=task_service)
+                ):
+                    yield event
 
-            if task.status == "cancelled":
-                yield create_sse_event({
-                    "type": "error",
-                    "task_id": task.id,
-                    "error": "任务已取消",
-                })
-                return
-
-            # running 或 pending：推送当前进度并轮询至终态
-            yield create_sse_event({
-                "type": "resumed",
-                "task_id": task.id,
-                "status": task.status,
-                "progress": task.progress,
-                "current_node": task.current_node or "",
-            })
-
-            # 轮询也使用心跳保活
-            async for event in stream_with_heartbeat(
-                self._poll_task_progress(task_id, user_id)
-            ):
-                yield event
-
-        except Exception as e:
-            yield create_sse_event({"type": "error", "error": str(e)})
+            except Exception as e:
+                yield create_sse_event({"type": "error", "error": str(e)})
 
     # ──────────── 内部方法 ────────────
 
@@ -398,6 +410,8 @@ class PlanService:
         user_id: str,
         poll_interval: float = 1.0,
         timeout: int = 600,
+        *,
+        task_service: "TaskService | None" = None,
     ) -> AsyncGenerator[str, None]:
         """
         轮询任务进度直到终态
@@ -407,10 +421,12 @@ class PlanService:
             user_id: 用户 ID
             poll_interval: 轮询间隔（秒）
             timeout: 超时时间（秒）
+            task_service: 可选的独立 TaskService（流式方法传入）
 
         Yields:
             SSE 格式事件字符串
         """
+        svc = task_service or self.task_service
         start = asyncio.get_event_loop().time()
         last_progress = -1
         last_node = ""
@@ -423,7 +439,7 @@ class PlanService:
                 })
                 return
 
-            task = await self.task_service.get_task(task_id, user_id)
+            task = await svc.get_task(task_id, user_id)
 
             if task.status == "completed":
                 yield create_sse_event({
@@ -456,7 +472,13 @@ class PlanService:
 
             await asyncio.sleep(poll_interval)
 
-    async def _update_task_progress_from_event(self, task_id: str, event: str):
+    async def _update_task_progress_from_event(
+        self,
+        task_id: str,
+        event: str,
+        *,
+        task_service: "TaskService | None" = None,
+    ):
         """
         从 SSE 事件中提取进度并更新任务
 
@@ -465,14 +487,16 @@ class PlanService:
         Args:
             task_id: 任务 ID
             event: SSE 事件字符串
+            task_service: 可选的独立 TaskService（流式方法传入）
         """
+        svc = task_service or self.task_service
         try:
             if event.startswith("data: "):
                 data = json.loads(event[6:].strip())
                 progress = data.get("progress")
                 if progress is not None:
                     node = data.get("node", "") or data.get("type", "")
-                    await self.task_service.update_task_progress(
+                    await svc.update_task_progress(
                         task_id, progress, node
                     )
         except (json.JSONDecodeError, KeyError):

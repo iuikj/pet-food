@@ -122,10 +122,9 @@ async def create_diet_plan_stream(
 async def resume_diet_plan_stream(
     task_id: str = Query(..., description="任务 ID"),
     current_user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session),
 ):
     try:
-        plan_service = PlanService(db)
+        plan_service = PlanService(None)
         return StreamingResponse(
             plan_service.resume_diet_plan_stream(
                 user_id=current_user_id,

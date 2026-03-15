@@ -11,6 +11,17 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 
+def _deep_serialize(obj: Any) -> Any:
+    """递归序列化嵌套的 Pydantic 模型 / dataclass / 列表 / 字典为原生类型"""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    if isinstance(obj, dict):
+        return {k: _deep_serialize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_deep_serialize(item) for item in obj]
+    return obj
+
+
 class ProgressEventType(str, Enum):
     """流式进度事件类型"""
 
@@ -75,8 +86,15 @@ class ProgressEvent(BaseModel):
     )
 
     def to_dict(self) -> dict:
-        """序列化为 dict，剔除 None 值以减少传输体积"""
-        return {k: v for k, v in self.model_dump().items() if v is not None}
+        """序列化为 dict，剔除 None 值以减少传输体积
+
+        对 detail 字段中可能包含的 Pydantic 模型进行递归序列化，
+        确保最终输出全部为 JSON 可序列化的原生类型。
+        """
+        data = self.model_dump()
+        if data.get("detail") is not None:
+            data["detail"] = _deep_serialize(self.detail)
+        return {k: v for k, v in data.items() if v is not None}
 
 
 def emit_progress(
