@@ -92,8 +92,8 @@ class MealService:
                     macro_nutrients = {
                         "protein": 0,
                         "fat": 0,
-                        "carbs": 0,
-                        "fiber": 0
+                        "carbohydrates": 0,
+                        "dietary_fiber": 0
                     }
                     micro_nutrients = {}
                     additional_micro_nutrients = {}
@@ -108,8 +108,8 @@ class MealService:
 
                         macro_nutrients["protein"] += macro.get("protein", 0)
                         macro_nutrients["fat"] += macro.get("fat", 0)
-                        macro_nutrients["carbs"] += macro.get("carbohydrates", 0)
-                        macro_nutrients["fiber"] += macro.get("dietary_fiber", 0)
+                        macro_nutrients["carbohydrates"] += macro.get("carbohydrates", 0)
+                        macro_nutrients["dietary_fiber"] += macro.get("dietary_fiber", 0)
 
                         for nutrient_name, preferred_unit in FIXED_MICRO_PREFERRED_UNITS.items():
                             self._merge_nutrient_amount(
@@ -150,6 +150,10 @@ class MealService:
                         "recommend_reason": meal.get("recommend_reason", "")
                     }
 
+                    # 餐名：食材拼接（与 PlanDetails 一致），fallback 到计划名
+                    item_names = [item.get("name", "") for item in food_items if item.get("name")]
+                    food_name = " + ".join(item_names) if item_names else meal.get("name", f"第{meal_order}餐")
+
                     record = MealRecord(
                         id=str(uuid.uuid4()),
                         pet_id=pet_id,
@@ -157,7 +161,7 @@ class MealService:
                         meal_date=meal_date,
                         meal_type=meal_type,
                         meal_order=meal_order,
-                        food_name=f"第 {week_index + 1} 周 - {meal.get('name', '')}",
+                        food_name=food_name,
                         description=meal.get("description", ""),
                         calories=total_calories,
                         nutrition_data=nutrition_data,
@@ -477,7 +481,7 @@ class MealService:
                     macro = nutr.get("macro_nutrients", {})
                     protein += macro.get("protein", 0)
                     fat += macro.get("fat", 0)
-                    carbs += macro.get("carbohydrates", 0)
+                    carbs += macro.get("carbohydrates", 0) or macro.get("carbs", 0)
 
                 daily_data.append({
                     "date": d.isoformat(),
@@ -536,9 +540,9 @@ class MealService:
             "ai_insights": ai_insights
         }
 
-    def _verify_pet_ownership(self, user_id: str, pet_id: str) -> Optional[Pet]:
+    async def _verify_pet_ownership(self, user_id: str, pet_id: str) -> Optional[Pet]:
         """验证宠物所有权"""
-        result = self.db.execute(
+        result = await self.db.execute(
             select(Pet).where(
                 and_(
                     Pet.id == pet_id,
@@ -549,9 +553,9 @@ class MealService:
         )
         return result.scalar_one_or_none()
 
-    def _verify_meal_ownership(self, user_id: str, meal_id: str) -> Optional[MealRecord]:
+    async def _verify_meal_ownership(self, user_id: str, meal_id: str) -> Optional[MealRecord]:
         """验证餐食所有权"""
-        result = self.db.execute(
+        result = await self.db.execute(
             select(MealRecord).join(Pet).where(
                 and_(
                     MealRecord.id == meal_id,
@@ -581,8 +585,8 @@ class MealService:
 
             protein = macro.get("protein", 0)
             fat = macro.get("fat", 0)
-            carbs = macro.get("carbohydrates", 0)
-            fiber = macro.get("dietary_fiber", 0)
+            carbs = macro.get("carbohydrates", 0) or macro.get("carbs", 0)
+            fiber = macro.get("dietary_fiber", 0) or macro.get("fiber", 0)
 
             total_protein += protein
             total_fat += fat

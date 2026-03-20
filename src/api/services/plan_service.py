@@ -160,7 +160,7 @@ class PlanService:
         plan_id: str,
         user_id: str,
     ) -> str:
-        from src.db.models import DietPlan
+        from src.db.models import DietPlan, MealRecord
 
         result = await self.db.execute(
             select(DietPlan).where(
@@ -176,6 +176,10 @@ class PlanService:
                 detail={"code": 404, "message": "饮食计划不存在", "detail": None},
             )
 
+        # 先删关联的 MealRecord（外键约束）
+        await self.db.execute(
+            delete(MealRecord).where(MealRecord.plan_id == plan_id)
+        )
         await self.db.execute(delete(DietPlan).where(DietPlan.id == plan_id))
         await self.db.commit()
         return plan_id
@@ -595,6 +599,19 @@ class PlanService:
             pet_info=temp["pet_info"],
             plan_data=temp["plan_data"],
         )
+
+        # 创建 30 天 MealRecord（失败不回滚计划保存）
+        pet_id = temp["pet_info"].get("pet_id")
+        if pet_id:
+            try:
+                from src.api.services.meal_service import MealService
+                meal_service = MealService(self.db)
+                await meal_service.create_meal_records_from_plan(
+                    user_id, pet_id, saved_id, temp["plan_data"]
+                )
+                logger.info("MealRecord 创建成功: plan_id=%s", saved_id)
+            except Exception as e:
+                logger.warning("MealRecord 创建失败（不影响计划保存）: %s", e)
 
         # 直接删除精确 key（比 scan_iter 模式匹配更高效）
         try:

@@ -15,7 +15,7 @@ from src.api.models.response import (
     ApiResponse,
     TodayMealsResponse,
     MealDetail,
-    NutritionSummary,
+    MealNutritionSummary,
     MealHistoryResponse,
     NutritionAnalysisResponse,
     AIInsight
@@ -49,7 +49,7 @@ async def get_today_meals(
             MealDetail(
                 id=m["id"],
                 type=m["type"],
-                name=m.get("details", {}).get("food_items", [{}])[0].get("name", "") if m.get("details", {}).get("food_items") else m["name"],
+                name=m["name"],
                 time=m["time"],
                 description=m["description"],
                 calories=m["calories"],
@@ -57,8 +57,12 @@ async def get_today_meals(
                 completed_at=m["completed_at"],
                 notes=m.get("notes"),
                 food_items=m.get("details", {}).get("food_items"),
-                nutrition_data=m.get("details"),
-                ai_tip=m.get("details", {}).get("cook_method", "")
+                nutrition_data={
+                    "macro_nutrients": m.get("details", {}).get("macro_nutrients", {}),
+                    "micro_nutrients": m.get("details", {}).get("micro_nutrients", {}),
+                },
+                ai_tip=m.get("details", {}).get("recommend_reason")
+                    or m.get("details", {}).get("cook_method", "")
             )
             for m in result["meals"]
         ]
@@ -69,7 +73,7 @@ async def get_today_meals(
             data=TodayMealsResponse(
                 date=result["date"],
                 meals=meals,
-                nutrition_summary=NutritionSummary(**result["nutrition_summary"])
+                nutrition_summary=MealNutritionSummary(**result["nutrition_summary"])
             )
         )
 
@@ -128,7 +132,7 @@ async def get_meals_by_date(
             MealDetail(
                 id=m["id"],
                 type=m["type"],
-                name=m.get("details", {}).get("food_items", [{}])[0].get("name", "") if m.get("details", {}).get("food_items") else m["name"],
+                name=m["name"],
                 time=m["time"],
                 description=m["description"],
                 calories=m["calories"],
@@ -136,8 +140,12 @@ async def get_meals_by_date(
                 completed_at=m["completed_at"],
                 notes=m.get("notes"),
                 food_items=m.get("details", {}).get("food_items"),
-                nutrition_data=m.get("details"),
-                ai_tip=m.get("details", {}).get("cook_method", "")
+                nutrition_data={
+                    "macro_nutrients": m.get("details", {}).get("macro_nutrients", {}),
+                    "micro_nutrients": m.get("details", {}).get("micro_nutrients", {}),
+                },
+                ai_tip=m.get("details", {}).get("recommend_reason")
+                    or m.get("details", {}).get("cook_method", "")
             )
             for m in result["meals"]
         ]
@@ -148,7 +156,7 @@ async def get_meals_by_date(
             data=TodayMealsResponse(
                 date=result["date"],
                 meals=meals,
-                nutrition_summary=NutritionSummary(**result["nutrition_summary"])
+                nutrition_summary=MealNutritionSummary(**result["nutrition_summary"])
             )
         )
 
