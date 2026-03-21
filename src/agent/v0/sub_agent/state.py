@@ -1,10 +1,2 @@
-from typing import Annotated
-from langchain_core.messages import AnyMessage
-from src.agent.v0.state import State
-from langgraph.graph.message import add_messages
-
-
-class SubAgentState(State):
-    temp_task_messages: Annotated[list[AnyMessage], add_messages]
-    # 网络搜索的使用记录标签
-    search_count: int
+# 桥接文件：向后兼容，所有符号从 common 导入
+from src.agent.common.sub_agent.state import *  # noqa: F401, F403

@@ -13,7 +13,7 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from src.agent.v0.entity.note import Note, note_reducer, NoteStateMixin
+from src.agent.common.entity.note import Note, note_reducer, NoteStateMixin
 from src.agent.v1.models import WeekAssignment
 from src.utils.strtuct import PetInformation
 

@@ -1,14 +1,2 @@
-from langgraph.graph.state import StateGraph
-
-from src.agent.v0.sub_agent.state import SubAgentState
-from src.agent.v0.sub_agent.node import sub_tools, subagent_call_model
-
-
-def build_sub_agent():
-    subgraph = StateGraph(SubAgentState)
-    subgraph.add_node("subagent_call_model", subagent_call_model)
-    subgraph.add_node("sub_tools", sub_tools)
-    subgraph.add_edge("__start__", "subagent_call_model")
-    subgraph.add_edge("sub_tools", "subagent_call_model")
-
-    return subgraph.compile()
+# 桥接文件：向后兼容，build_sub_agent 从 common 导入
+from src.agent.common.sub_agent.graph import build_sub_agent  # noqa: F401

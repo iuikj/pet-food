@@ -6,39 +6,7 @@ Phase 1 -> 2: coordination guide
 Phase 2: week planner
 """
 
-PET_INFO_UNIT_NOTE = """
-单位约束：
-- `pet_information.pet_age` 一律表示月龄，不是岁数。
-- `pet_information.pet_weight` 一律表示千克（kg）。
-- 不要把月龄误读为岁，也不要把体重误读为克。
-"""
-
-DIET_PLAN_OUTPUT_CONTRACT = """
-食谱输出契约：
-- `food_items[].weight` 必须使用克（g）。
-- 宏量营养素全部使用克（g）。
-- 固定微量营养素必须使用 `{{ "value": 数值, "unit": "单位" }}` 结构，禁止输出裸数字。
-- 固定微量营养素必须使用以下单位：
-  - `vitamin_a`: `IU`（维生素A）
-  - `vitamin_c`: `mg`（维生素C）
-  - `vitamin_d`: `IU`（维生素D）
-  - `vitamin_e`: `mg`（维生素E）
-  - `calcium`: `mg`（钙）
-  - `iron`: `mg`（铁）
-  - `sodium`: `mg`（钠）
-  - `potassium`: `mg`（钾）
-  - `phosphorus`: `mg`（磷，与钙配合计算钙磷比）
-  - `zinc`: `mg`（锌）
-  - `taurine`: `mg`（牛磺酸，对猫必需）
-  - `cholesterol`: `mg`（胆固醇）
-- `additional_nutrients` 必须是对象，键是营养素名称，值同样是 `{{ "value": 数值, "unit": "单位" }}`。
-- 常见 additional nutrient 单位：
-  - `Omega-3` / `DHA` / `EPA`: `mg`
-  - `lutein`: `mg`
-  - `selenium`: `ug`
-  - `probiotics`: `CFU`
-- 不要发明新的固定微量营养素字段；额外营养素请放到 `additional_nutrients`。
-"""
+from src.agent.common.prompts.prompt import PET_INFO_UNIT_NOTE, DIET_PLAN_OUTPUT_CONTRACT
 
 RESEARCH_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + """
 你是一个专业的宠物营养研究规划师。你的职责是**仅完成调研工作**，为后续生成四周饮食计划提供充分的知识基础。  

@@ -1,9 +1,2 @@
-from typing import Annotated
-
-from langchain_core.messages import AnyMessage
-from langgraph.graph.message import add_messages
-from src.agent.v0.state import State
-
-
-class WriteState(State):
-    temp_write_note_messages: Annotated[list[AnyMessage], add_messages]
+# 桥接文件：向后兼容，所有符号从 common 导入
+from src.agent.common.write_agent.state import *  # noqa: F401, F403

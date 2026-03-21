@@ -1,11 +1,2 @@
-from langgraph.graph import StateGraph
-
-from src.agent.v0.structrue_agent.node import structure_report
-from src.agent.v0.structrue_agent.state import StructState
-
-
-def build_structure_agent():
-    struct_graph = StateGraph(StructState)
-    struct_graph.add_node("structure_report", structure_report)
-    struct_graph.add_edge("__start__", "structure_report")
-    return struct_graph.compile()
+# 桥接文件：向后兼容，build_structure_agent 从 common 导入
+from src.agent.common.structrue_agent.graph import build_structure_agent  # noqa: F401

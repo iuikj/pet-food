@@ -6,6 +6,15 @@
 
 ## 变更记录 (Changelog)
 
+### 2026-03-21
+- **重构**：提取 `common/` 共享层，消除 v1 对 v0 的强耦合
+  - 新建 `common/entity/`（note.py, plan.py）、`common/utils/`（struct.py, format.py）
+  - 新建 `common/stream_events.py`、`common/tools.py`、`common/state.py`、`common/context.py`
+  - 新建 `common/prompts/prompt.py`（统一使用 v1 完整版 DIET_PLAN_OUTPUT_CONTRACT）
+  - 新建 `common/sub_agent/`、`common/write_agent/`、`common/structrue_agent/`（三个子图）
+  - v0 原文件改为桥接 re-export（向后兼容）
+  - v1 所有 `from src.agent.v0.*` 导入改为 `from src.agent.common.*`
+
 ### 2025-02-18
 - 新增 `stream_events.py` 模块：ProgressEventType 枚举 + ProgressEvent 模型 + emit_progress 辅助函数
 - 所有 agent 节点（call_model、subagent_call_model、write、summary、structure_report、gather）添加结构化进度事件输出
@@ -36,36 +45,46 @@ Agent 模块是项目的**核心模块**，实现了基于 LangGraph 的**多智
 ```
 src/agent/
 ├── __init__.py
-├── graph.py              # 主图构建（LangGraph StateGraph）
-├── state.py              # 状态定义（StateInput, State, StateOutput）
-├── node.py               # 主节点实现（call_model, gather, tool_node）
-├── tools.py              # 工具定义（9个工具函数）
-├── stream_events.py      # 流式进度事件（ProgressEventType, ProgressEvent, emit_progress）
-├── prompts/              # 提示词模块
+├── common/                          # ★ 共享层（v0 和 v1 共用）
 │   ├── __init__.py
-│   └── prompt.py         # 5个核心提示词
-├── utils/                # 工具模块
-│   ├── __init__.py
-│   ├── struct.py         # 数据结构（7个Pydantic模型）
-│   └── context.py        # 运行时上下文（Context数据类）
-├── entity/               # 实体模块
-│   ├── __init__.py
-│   └── note.py           # 笔记实体（Note类和工具工厂）
-├── sub_agent/            # 子智能体模块
-│   ├── __init__.py
-│   ├── graph.py          # 子智能体图构建
-│   ├── state.py          # 子智能体状态
-│   └── node.py           # 子智能体节点
-├── write_agent/          # 写入智能体模块
-│   ├── __init__.py
-│   ├── graph.py          # 写入智能体图构建
-│   ├── state.py          # 写入智能体状态
-│   └── node.py           # 写入智能体节点
-└── structrue_agent/      # 结构化智能体模块（注意拼写：structrue）
-    ├── __init__.py
-    ├── graph.py          # 结构化智能体图构建
-    ├── state.py          # 结构化智能体状态
-    └── node.py           # 结构化智能体节点
+│   ├── context.py                   # resolve_subgraph_context（兼容 V0/V1）
+│   ├── state.py                     # CommonState / CommonStateInput
+│   ├── stream_events.py             # ProgressEventType, ProgressEvent, emit_progress
+│   ├── tools.py                     # transfor_task_to_subagent, get_weather, tavily_search
+│   ├── entity/
+│   │   ├── note.py                  # Note, NoteStateMixin, 工具工厂
+│   │   └── plan.py                  # PlanStateMixin, 工具工厂
+│   ├── prompts/
+│   │   └── prompt.py                # PET_INFO_UNIT_NOTE, DIET_PLAN_OUTPUT_CONTRACT, SUBAGENT_PROMPT 等
+│   ├── utils/
+│   │   ├── struct.py                # PetDietPlan, WeeklyDietPlan 等 Pydantic 模型
+│   │   └── format.py                # message_format 工具函数
+│   ├── sub_agent/                   # 子智能体子图（state/node/graph）
+│   ├── write_agent/                 # 写入智能体子图（state/node/graph）
+│   └── structrue_agent/             # 结构化智能体子图（保留拼写错误）
+├── v0/  （精简版：主图 + 桥接 re-export 文件）
+│   ├── graph.py                     # 主图构建
+│   ├── node.py                      # call_model, gather, tool_node
+│   ├── state.py                     # State, StateInput, StateOutput
+│   ├── tools.py                     # 工具实例（从 common 导入工厂/函数）
+│   ├── prompts/prompt.py            # PLAN_MODEL_PROMPT（v0专用）+ re-export common 常量
+│   ├── utils/context.py             # Context 数据类 + resolve_v0_context
+│   ├── entity/*.py                  # 桥接：from common.entity.* import *
+│   ├── utils/struct.py              # 桥接：from common.utils.struct import *
+│   ├── utils/format.py              # 桥接：from common.utils.format import *
+│   ├── stream_events.py             # 桥接：from common.stream_events import *
+│   ├── sub_agent/*.py               # 桥接：from common.sub_agent.* import *
+│   ├── write_agent/*.py             # 桥接：from common.write_agent.* import *
+│   └── structrue_agent/*.py         # 桥接：from common.structrue_agent.* import *
+└── v1/  （三阶段并行架构，当前活跃版本）
+    ├── graph.py                     # 主图（子图导入从 common）
+    ├── node.py                      # 三阶段节点（导入从 common）
+    ├── state.py                     # StateV1（导入从 common）
+    ├── tools.py                     # V1工具（工厂从 common 导入）
+    ├── models.py                    # CoordinationGuide, WeekAssignment
+    ├── prompts/prompt.py            # V1专用 prompt（共享常量从 common 导入）
+    ├── utils/context.py             # ContextV1（共享 prompt 从 common 导入）
+    └── week_agent/                  # 周计划子图（导入从 common）
 ```
 
 ---

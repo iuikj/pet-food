@@ -11,7 +11,7 @@ from typing import Annotated, Optional
 
 from langchain_core.runnables import RunnableConfig
 
-from src.agent.v0.prompts.prompt import (
+from src.agent.common.prompts.prompt import (
     SUBAGENT_PROMPT,
     SUMMARY_PROMPT,
     WRITE_PROMPT,

@@ -14,12 +14,12 @@ from typing import Annotated, Optional
 
 from langchain_core.runnables import RunnableConfig
 
-from src.agent.v0.prompts.prompt import (
+from src.agent.common.prompts.prompt import (
     SUBAGENT_PROMPT,
     SUMMARY_PROMPT,
-    PLAN_MODEL_PROMPT,
     WRITE_PROMPT,
 )
+from src.agent.v0.prompts.prompt import PLAN_MODEL_PROMPT
 
 logger = logging.getLogger(__name__)
 

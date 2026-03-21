@@ -13,13 +13,13 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
 from langchain_dev_utils.chat_models import load_chat_model
-from src.agent.v0.utils.format import message_format
+from src.agent.common.utils.format import message_format
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, Send
 
-from src.agent.v0.entity.note import Note
-from src.agent.v0.stream_events import ProgressEventType, emit_progress
-from src.agent.v0.utils.struct import PetDietPlan, MonthlyDietPlan
+from src.agent.common.entity.note import Note
+from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.utils.struct import PetDietPlan, MonthlyDietPlan
 from src.agent.v1.models import CoordinationGuide
 from src.agent.v1.state import StateV1
 from src.utils.strtuct import PetInformation

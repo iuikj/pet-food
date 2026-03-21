@@ -9,8 +9,8 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from langgraph.types import Command
 
-from src.agent.v0.entity.note import Note
-from src.agent.v0.tools import tavily_search
+from src.agent.common.entity.note import Note
+from src.agent.common.tools import tavily_search
 
 
 def create_query_shared_note_tool() -> BaseTool:

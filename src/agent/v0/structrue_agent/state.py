@@ -1,9 +1,2 @@
-from typing import Annotated
-
-from src.agent.v0.entity.note import Note
-from src.agent.v0.state import State
-
-
-class StructState(State):
-    temp_note: Annotated[Note, "临时笔记"]
-    failed_reason: Annotated[str, "失败原因"]
+# 桥接文件：向后兼容，所有符号从 common 导入
+from src.agent.common.structrue_agent.state import *  # noqa: F401, F403

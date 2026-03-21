@@ -10,9 +10,9 @@ import os
 from dotenv import load_dotenv
 from langgraph.graph.state import StateGraph
 
-from src.agent.v0.sub_agent.graph import build_sub_agent
-from src.agent.v0.write_agent.graph import build_write_agent
-from src.agent.v0.structrue_agent.graph import build_structure_agent
+from src.agent.common.sub_agent.graph import build_sub_agent
+from src.agent.common.write_agent.graph import build_write_agent
+from src.agent.common.structrue_agent.graph import build_structure_agent
 from src.agent.v1.node import (
     research_planner,
     research_tools,
