@@ -19,18 +19,22 @@ DIET_PLAN_OUTPUT_CONTRACT = """
 - 宏量营养素全部使用克（g）。
 - 固定微量营养素必须使用 `{{ "value": 数值, "unit": "单位" }}` 结构，禁止输出裸数字。
 - 固定微量营养素必须使用以下单位：
-  - `vitamin_a`: `IU`
-  - `vitamin_c`: `mg`
-  - `vitamin_d`: `IU`
-  - `calcium`: `mg`
-  - `iron`: `mg`
-  - `sodium`: `mg`
-  - `potassium`: `mg`
-  - `cholesterol`: `mg`
+  - `vitamin_a`: `IU`（维生素A）
+  - `vitamin_c`: `mg`（维生素C）
+  - `vitamin_d`: `IU`（维生素D）
+  - `vitamin_e`: `mg`（维生素E）
+  - `calcium`: `mg`（钙）
+  - `iron`: `mg`（铁）
+  - `sodium`: `mg`（钠）
+  - `potassium`: `mg`（钾）
+  - `phosphorus`: `mg`（磷，与钙配合计算钙磷比）
+  - `zinc`: `mg`（锌）
+  - `taurine`: `mg`（牛磺酸，对猫必需）
+  - `cholesterol`: `mg`（胆固醇）
 - `additional_nutrients` 必须是对象，键是营养素名称，值同样是 `{{ "value": 数值, "unit": "单位" }}`。
 - 常见 additional nutrient 单位：
-  - `Omega-3` / `DHA` / `EPA`: `g`
-  - `vitamin_e` / `zinc` / `lutein`: `mg`
+  - `Omega-3` / `DHA` / `EPA`: `mg`
+  - `lutein`: `mg`
   - `selenium`: `ug`
   - `probiotics`: `CFU`
 - 不要发明新的固定微量营养素字段；额外营养素请放到 `additional_nutrients`。
@@ -172,14 +176,16 @@ WEEK_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + DIET_PLAN_OUTPUT_CONTRACT + """
 - 总热量：[数值]kcal（说明）  
 - 蛋白质总量：[数值]g（[占比]%）  
 - 脂肪总量：[数值]g（[占比]%）  
-- Omega-3总量：[数值]g（[功能说明]）  
-- 微量营养素：  
-  - 维生素A：[数值]IU  
-  - 维生素E：[数值]mg  
-  - 锌：[数值]mg  
-  - 硒：[数值]μg  
-  - 叶黄素：[数值]mg  
-  - 益生菌：[数值]CFU  
+- Omega-3总量：[数值]mg（[功能说明]）
+- 微量营养素：
+  - 维生素A：[数值]IU
+  - 维生素E：[数值]mg
+  - 锌：[数值]mg
+  - 磷：[数值]mg
+  - 牛磺酸：[数值]mg
+  - 硒：[数值]μg
+  - 叶黄素：[数值]mg
+  - 益生菌：[数值]CFU
   
 特别说明  
 1. [说明1]  

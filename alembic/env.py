@@ -25,7 +25,7 @@ sys.path.insert(0, str(project_root))
 
 from src.api.config import settings
 from src.db.session import Base
-from src.db.models import User, Task, DietPlan, RefreshToken, Pet, MealRecord, WeightRecord  # 导入所有模型
+from src.db.models import User, Task, DietPlan, RefreshToken, Pet, MealRecord, WeightRecord, Ingredient, Supplement  # 导入所有模型
 
 # Alembic 配置对象
 config = context.config

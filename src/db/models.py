@@ -242,3 +242,116 @@ class WeightRecord(Base):
 
     # 关系
     pet: Mapped["Pet"] = relationship("Pet", back_populates="weight_records")
+
+
+class Ingredient(Base):
+    """食材营养数据表"""
+    __tablename__ = "ingredients"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False, comment="食材名称")
+    category: Mapped[str] = mapped_column(String(50), nullable=False, comment="大类别")
+    sub_category: Mapped[str] = mapped_column(String(50), nullable=False, comment="小类别")
+    has_nutrition_data: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否有营养数据")
+    note: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, comment="计量备注")
+
+    # 宏量营养素
+    calories: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="热量 (kcal)")
+    carbohydrates: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="碳水化合物 (g)")
+    protein: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="蛋白质 (g)")
+    fat: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="脂肪 (g)")
+    dietary_fiber: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="膳食纤维 (g)")
+
+    # 矿物质
+    iron: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="铁 (mg)")
+    zinc: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="锌 (mg)")
+    manganese: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="锰 (mg)")
+    magnesium: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="镁 (mg)")
+    sodium: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="钠 (mg)")
+    calcium: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="钙 (mg)")
+    phosphorus: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="磷 (mg)")
+    copper: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="铜 (mg)")
+    iodine: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="碘 (μg)")
+    potassium: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="钾 (mg)")
+    selenium: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="硒 (μg)")
+
+    # 维生素
+    vitamin_b1: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="维生素B1 (mg)")
+    vitamin_e: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="维生素E (mg)")
+    vitamin_a: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="维生素A (IU)")
+    vitamin_d: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="维生素D (IU)")
+
+    # 脂肪酸
+    epa: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="EPA (mg)")
+    dha: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="DHA (mg)")
+    epa_dha: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="EPA&DHA (mg)")
+
+    # 其他
+    bone_content: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="骨骼含量 (%)")
+    water: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="水分 (g)")
+    choline: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="胆碱 (mg)")
+    taurine: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="牛磺酸 (mg)")
+    cholesterol: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="胆固醇 (mg)")
+
+    # 时间戳
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    # 索引
+    __table_args__ = (
+        Index("idx_ingredient_category", "category", "sub_category"),
+    )
+
+
+class Supplement(Base):
+    """营养补剂数据表"""
+    __tablename__ = "supplements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False, comment="产品名称")
+    category: Mapped[str] = mapped_column(String(50), nullable=False, comment="类别")
+    has_nutrition_data: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否有营养数据")
+    note: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, comment="计量备注")
+
+    # 矿物质
+    calcium: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="钙 (mg)")
+    magnesium: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="镁 (mg)")
+    potassium: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="钾 (mg)")
+    sodium: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="钠 (mg)")
+    phosphorus: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="磷 (mg)")
+    iodine: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="碘 (μg)")
+    manganese: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="锰 (mg)")
+    iron: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="铁 (mg)")
+    zinc: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="锌 (mg)")
+    copper: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="铜 (mg)")
+
+    # 维生素
+    vitamin_d: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="维生素D (IU)")
+    vitamin_a: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="维生素A (IU)")
+    vitamin_e: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="维生素E (mg)")
+    vitamin_b1: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="维生素B1 (mg)")
+
+    # 其他
+    taurine: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="牛磺酸 (mg)")
+
+    # 脂肪酸
+    epa_dha: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="EPA&DHA (mg)")
+    epa: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="EPA (mg)")
+    dha: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="DHA (mg)")
+
+    # 时间戳
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    # 索引
+    __table_args__ = (
+        Index("idx_supplement_category", "category"),
+    )

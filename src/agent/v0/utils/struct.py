@@ -27,6 +27,9 @@ class Micronutrients(BaseModel):
     vitamin_d: NutrientAmount = Field(
         description="Vitamin D amount. Use unit IU."
     )
+    vitamin_e: NutrientAmount = Field(
+        description="Vitamin E amount. Use unit mg."
+    )
     calcium: NutrientAmount = Field(
         description="Calcium amount. Use unit mg."
     )
@@ -39,6 +42,15 @@ class Micronutrients(BaseModel):
     potassium: NutrientAmount = Field(
         description="Potassium amount. Use unit mg."
     )
+    phosphorus: NutrientAmount = Field(
+        description="Phosphorus amount. Use unit mg. Important for calcium-phosphorus ratio."
+    )
+    zinc: NutrientAmount = Field(
+        description="Zinc amount. Use unit mg."
+    )
+    taurine: NutrientAmount = Field(
+        description="Taurine amount. Use unit mg. Essential for cats."
+    )
     cholesterol: NutrientAmount = Field(
         description="Cholesterol amount. Use unit mg."
     )
@@ -46,8 +58,8 @@ class Micronutrients(BaseModel):
         default_factory=dict,
         description=(
             "Additional nutrients keyed by display name. "
-            "Each item must include both value and unit, for example Omega-3 (g), "
-            "selenium (ug), vitamin E (mg), zinc (mg), probiotics (CFU)."
+            "Each item must include both value and unit, for example Omega-3 (mg), "
+            "DHA (mg), EPA (mg), selenium (ug), lutein (mg), probiotics (CFU)."
         ),
     )
 
