@@ -25,7 +25,7 @@ sys.path.insert(0, str(project_root))
 
 from src.api.config import settings
 from src.db.session import Base
-from src.db.models import User, Task, DietPlan, RefreshToken  # 导入所有模型
+from src.db.models import User, Task, DietPlan, RefreshToken, Pet, MealRecord, WeightRecord  # 导入所有模型
 
 # Alembic 配置对象
 config = context.config
@@ -78,7 +78,8 @@ async def run_async_migrations() -> None:
     使用异步引擎
     """
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = settings.database_url_sync
+    # 直接使用 asyncpg URL，避免依赖 psycopg2
+    configuration["sqlalchemy.url"] = settings.database_url
 
     connectable = async_engine_from_config(
         configuration,

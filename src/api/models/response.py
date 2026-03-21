@@ -135,6 +135,8 @@ class DietPlanSummaryResponse(BaseModel):
     pet_age: int = Field(..., gt=0)
     pet_weight: float = Field(..., gt=0)
     health_status: Optional[str] = None
+    is_active: bool = False
+    applied_at: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

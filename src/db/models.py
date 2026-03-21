@@ -2,9 +2,9 @@
 数据库模型定义
 使用 SQLAlchemy 异步 ORM
 """
-from datetime import datetime
+from datetime import datetime, date as date_type
 from typing import Optional
-from sqlalchemy import String, Boolean, DateTime, Text, Integer, ForeignKey, JSON, Numeric, Date, Index
+from sqlalchemy import String, Boolean, DateTime, Text, Integer, ForeignKey, JSON, Numeric, Date, Index, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -126,6 +126,11 @@ class Pet(Base):
         back_populates="pet",
         cascade="all, delete-orphan"
     )
+    weight_records: Mapped[list["WeightRecord"]] = relationship(
+        "WeightRecord",
+        back_populates="pet",
+        cascade="all, delete-orphan"
+    )
 
 
 class MealRecord(Base):
@@ -143,6 +148,11 @@ class MealRecord(Base):
     calories: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # 营养信息（JSON 存储，兼容 PetDietPlan 结构）
     nutrition_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # 营养顶级字段（提升查询效率，兼容旧数据 fallback 到 JSON）
+    protein: Mapped[Optional[float]] = mapped_column(Numeric(8, 2), nullable=True)
+    fat: Mapped[Optional[float]] = mapped_column(Numeric(8, 2), nullable=True)
+    carbohydrates: Mapped[Optional[float]] = mapped_column(Numeric(8, 2), nullable=True)
+    dietary_fiber: Mapped[Optional[float]] = mapped_column(Numeric(8, 2), nullable=True)
     # 完成状态
     is_completed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -182,6 +192,10 @@ class DietPlan(Base):
     health_status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 饮食计划（完整的 JSON 数据，存储 PetDietPlan 结构）
     plan_data: Mapped[dict] = mapped_column(JSON, nullable=False)
+    # 计划应用状态
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    active_start_date: Mapped[Optional[date_type]] = mapped_column(Date, nullable=True)
     # 元数据
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -194,6 +208,11 @@ class DietPlan(Base):
     user: Mapped["User"] = relationship("User", back_populates="diet_plans")
     pet: Mapped[Optional["Pet"]] = relationship("Pet", back_populates="diet_plans")
 
+    # 索引
+    __table_args__ = (
+        Index("idx_pet_active_plan", "pet_id", "is_active"),
+    )
+
 
 class RefreshToken(Base):
     """刷新令牌表（用于 Token 黑名单）"""
@@ -204,3 +223,22 @@ class RefreshToken(Base):
     is_revoked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class WeightRecord(Base):
+    """体重记录表"""
+    __tablename__ = "weight_records"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
+    pet_id: Mapped[str] = mapped_column(String(36), ForeignKey("pets.id"), nullable=False, index=True)
+    weight: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
+    recorded_date: Mapped[date_type] = mapped_column(Date, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # 同一宠物同一天只能有一条记录
+    __table_args__ = (
+        UniqueConstraint("pet_id", "recorded_date", name="uq_pet_recorded_date"),
+    )
+
+    # 关系
+    pet: Mapped["Pet"] = relationship("Pet", back_populates="weight_records")

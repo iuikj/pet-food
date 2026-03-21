@@ -165,6 +165,10 @@ class MealService:
                         description=meal.get("description", ""),
                         calories=total_calories,
                         nutrition_data=nutrition_data,
+                        protein=round(macro_nutrients["protein"], 2),
+                        fat=round(macro_nutrients["fat"], 2),
+                        carbohydrates=round(macro_nutrients["carbohydrates"], 2),
+                        dietary_fiber=round(macro_nutrients["dietary_fiber"], 2),
                         is_completed=False
                     )
                     self.db.add(record)
@@ -472,16 +476,21 @@ class MealService:
                 total_meals = len(day_meals)
                 completion_rate = (completed_count / total_meals * 100) if total_meals > 0 else 0
 
-                # 聚合营养素
+                # 聚合营养素（优先顶级字段，fallback JSON）
                 protein = 0
                 fat = 0
                 carbs = 0
                 for m in day_meals:
-                    nutr = m.nutrition_data or {}
-                    macro = nutr.get("macro_nutrients", {})
-                    protein += macro.get("protein", 0)
-                    fat += macro.get("fat", 0)
-                    carbs += macro.get("carbohydrates", 0) or macro.get("carbs", 0)
+                    if m.protein is not None:
+                        protein += float(m.protein)
+                        fat += float(m.fat or 0)
+                        carbs += float(m.carbohydrates or 0)
+                    else:
+                        nutr = m.nutrition_data or {}
+                        macro = nutr.get("macro_nutrients", {})
+                        protein += macro.get("protein", 0)
+                        fat += macro.get("fat", 0)
+                        carbs += macro.get("carbohydrates", 0) or macro.get("carbs", 0)
 
                 daily_data.append({
                     "date": d.isoformat(),
@@ -566,7 +575,7 @@ class MealService:
         return result.scalar_one_or_none()
 
     async def _calculate_nutrition_summary(self, meals: list) -> dict:
-        """计算营养摘要"""
+        """计算营养摘要（优先读顶级字段，fallback 到 JSON 兼容旧数据）"""
         total_calories = sum(m.calories or 0 for m in meals)
         consumed_calories = sum(m.calories or 0 for m in meals if m.is_completed)
 
@@ -580,22 +589,28 @@ class MealService:
         consumed_fiber = 0
 
         for meal in meals:
-            nutr = meal.nutrition_data or {}
-            macro = nutr.get("macro_nutrients", {})
-
-            protein = macro.get("protein", 0)
-            fat = macro.get("fat", 0)
-            carbs = macro.get("carbohydrates", 0) or macro.get("carbs", 0)
-            fiber = macro.get("dietary_fiber", 0) or macro.get("fiber", 0)
+            # 优先使用顶级字段，fallback 到 JSON
+            if meal.protein is not None:
+                protein = float(meal.protein)
+                fat_val = float(meal.fat or 0)
+                carbs = float(meal.carbohydrates or 0)
+                fiber = float(meal.dietary_fiber or 0)
+            else:
+                nutr = meal.nutrition_data or {}
+                macro = nutr.get("macro_nutrients", {})
+                protein = macro.get("protein", 0)
+                fat_val = macro.get("fat", 0)
+                carbs = macro.get("carbohydrates", 0) or macro.get("carbs", 0)
+                fiber = macro.get("dietary_fiber", 0) or macro.get("fiber", 0)
 
             total_protein += protein
-            total_fat += fat
+            total_fat += fat_val
             total_carbs += carbs
             total_fiber += fiber
 
             if meal.is_completed:
                 consumed_protein += protein
-                consumed_fat += fat
+                consumed_fat += fat_val
                 consumed_carbs += carbs
                 consumed_fiber += fiber
 

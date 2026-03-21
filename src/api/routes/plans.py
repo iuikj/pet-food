@@ -167,6 +167,33 @@ async def confirm_diet_plan(
         )
 
 
+@router.post("/{plan_id}/apply", response_model=ApiResponse[dict], summary="应用饮食计划")
+async def apply_diet_plan(
+    plan_id: str,
+    current_user_id: str = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """应用饮食计划：停用旧计划 → 激活新计划 → 从今天起生成 MealRecords"""
+    try:
+        service = PlanService(db)
+        result = await service.apply_diet_plan(
+            plan_id=plan_id,
+            user_id=current_user_id,
+        )
+        return ApiResponse(
+            code=0,
+            message="应用成功",
+            data=result,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"code": -1, "message": "应用计划失败", "detail": str(exc)},
+        )
+
+
 @router.get("/", response_model=ApiResponse[DietPlanListResponse], summary="获取饮食计划列表")
 async def list_diet_plans(
     pet_type: PetType | None = Query(None, description="宠物类型筛选"),

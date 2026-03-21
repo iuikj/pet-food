@@ -6,7 +6,7 @@ import json
 import asyncio
 import logging
 from typing import Dict, Any, AsyncGenerator
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 import uuid
 
 from fastapi import HTTPException
@@ -17,6 +17,7 @@ from langgraph.graph.state import CompiledStateGraph
 from src.db.session import AsyncSessionLocal
 from src.api.services.task_service import TaskService
 from src.api.services.pet_service import PetService
+from src.api.services.meal_service import MealService
 from src.api.models.response import (
     DietPlanDetailResponse,
     DietPlanListResponse,
@@ -105,6 +106,8 @@ class PlanService:
                 pet_age=plan.pet_age,
                 pet_weight=float(plan.pet_weight),
                 health_status=plan.health_status,
+                is_active=plan.is_active,
+                applied_at=plan.applied_at,
                 created_at=plan.created_at,
                 updated_at=plan.updated_at,
             )
@@ -176,6 +179,12 @@ class PlanService:
                 detail={"code": 404, "message": "饮食计划不存在", "detail": None},
             )
 
+        # 如果是活跃计划，清除状态
+        if plan.is_active:
+            plan.is_active = False
+            plan.applied_at = None
+            plan.active_start_date = None
+
         # 先删关联的 MealRecord（外键约束）
         await self.db.execute(
             delete(MealRecord).where(MealRecord.plan_id == plan_id)
@@ -183,6 +192,101 @@ class PlanService:
         await self.db.execute(delete(DietPlan).where(DietPlan.id == plan_id))
         await self.db.commit()
         return plan_id
+
+    async def apply_diet_plan(
+        self,
+        *,
+        plan_id: str,
+        user_id: str,
+    ) -> dict:
+        """
+        应用饮食计划：停用旧活跃计划 → 激活新计划 → 从今天起生成 MealRecords
+
+        Args:
+            plan_id: 要应用的计划 ID
+            user_id: 当前用户 ID
+
+        Returns:
+            包含 plan_id, is_active, applied_at, meals_created 的字典
+        """
+        from src.db.models import DietPlan, MealRecord, Pet
+
+        # 1. 校验计划归属
+        result = await self.db.execute(
+            select(DietPlan).where(
+                DietPlan.id == plan_id,
+                DietPlan.user_id == user_id,
+            )
+        )
+        plan = result.scalars().first()
+        if not plan:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": 404, "message": "饮食计划不存在", "detail": None},
+            )
+
+        if not plan.pet_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": 400, "message": "该计划未关联宠物，无法应用", "detail": None},
+            )
+
+        # 校验宠物存在
+        pet_result = await self.db.execute(
+            select(Pet).where(Pet.id == plan.pet_id, Pet.user_id == user_id, Pet.is_active == True)
+        )
+        pet = pet_result.scalars().first()
+        if not pet:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": 404, "message": "关联宠物不存在", "detail": None},
+            )
+
+        today = date.today()
+        now = datetime.now(timezone.utc)
+
+        # 2. 停用该宠物当前活跃计划
+        active_plans_result = await self.db.execute(
+            select(DietPlan).where(
+                DietPlan.pet_id == plan.pet_id,
+                DietPlan.is_active == True,
+                DietPlan.id != plan_id,
+            )
+        )
+        for active_plan in active_plans_result.scalars().all():
+            active_plan.is_active = False
+
+        # 3. 删除旧计划的未来未完成 MealRecords
+        await self.db.execute(
+            delete(MealRecord).where(
+                MealRecord.pet_id == plan.pet_id,
+                MealRecord.meal_date >= today,
+                MealRecord.is_completed == False,
+            )
+        )
+
+        # 4. 激活新计划
+        plan.is_active = True
+        plan.applied_at = now
+        plan.active_start_date = today
+
+        await self.db.flush()
+
+        # 5. 从今天起生成 MealRecords（4 周循环）
+        meal_service = MealService(self.db)
+        records = await meal_service.create_meal_records_from_plan(
+            user_id=user_id,
+            pet_id=plan.pet_id,
+            plan_id=plan_id,
+            plan_data=plan.plan_data,
+        )
+
+        return {
+            "plan_id": plan_id,
+            "is_active": True,
+            "applied_at": now.isoformat(),
+            "meals_created": len(records),
+        }
 
     async def execute_diet_plan_stream(
         self,
@@ -599,19 +703,6 @@ class PlanService:
             pet_info=temp["pet_info"],
             plan_data=temp["plan_data"],
         )
-
-        # 创建 30 天 MealRecord（失败不回滚计划保存）
-        pet_id = temp["pet_info"].get("pet_id")
-        if pet_id:
-            try:
-                from src.api.services.meal_service import MealService
-                meal_service = MealService(self.db)
-                await meal_service.create_meal_records_from_plan(
-                    user_id, pet_id, saved_id, temp["plan_data"]
-                )
-                logger.info("MealRecord 创建成功: plan_id=%s", saved_id)
-            except Exception as e:
-                logger.warning("MealRecord 创建失败（不影响计划保存）: %s", e)
 
         # 直接删除精确 key（比 scan_iter 模式匹配更高效）
         try:
