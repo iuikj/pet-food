@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func
+from sqlalchemy import delete, func, select, update
 import uuid
 
 from src.db.models import Task, User
@@ -216,7 +216,9 @@ class TaskService:
         current_node: str
     ) -> None:
         """
-        Lightweight progress persistence for high-frequency SSE events.
+        轻量持久化任务进度。
+
+        用于高频 SSE 进度事件，避免每次都走 ORM 对象加载和 refresh。
         """
         result = await self.db.execute(
             update(Task)
@@ -376,19 +378,21 @@ class TaskService:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         # 删除超过指定天数且已完成/失败/取消的任务
-        result = await self.db.execute(
-            select(Task).where(
-                Task.created_at < cutoff_date,
-                Task.status.in_(["completed", "failed", "cancelled"])
-            )
+        filter_conditions = (
+            Task.created_at < cutoff_date,
+            Task.status.in_(["completed", "failed", "cancelled"]),
         )
-        old_tasks = result.scalars().all()
 
-        count = len(old_tasks)
+        # 先统计再批量删除，避免把旧任务逐条加载进内存。
+        count_result = await self.db.execute(
+            select(func.count(Task.id)).where(*filter_conditions)
+        )
+        count = count_result.scalar() or 0
+        if count == 0:
+            return 0
 
-        for task in old_tasks:
-            await self.db.delete(task)
-
+        await self.db.execute(
+            delete(Task).where(*filter_conditions)
+        )
         await self.db.commit()
-
         return count

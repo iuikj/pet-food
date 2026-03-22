@@ -1,5 +1,8 @@
 """
-FastAPI application entrypoint.
+FastAPI 应用入口。
+
+这里保留开发环境下的自动建表体验，但生产环境不再执行 create_all，
+避免每次启动都把 schema 检查成本放到运行时。
 """
 import logging
 from contextlib import asynccontextmanager
@@ -23,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 启动阶段只做基础探活，生产模式跳过 create_all。
     logger.info("=" * 60)
     logger.info("Starting FastAPI application")
     logger.info("  environment: %s", "development" if settings.is_dev else "production")
@@ -43,6 +47,7 @@ async def lifespan(app: FastAPI):
     elif db_ok:
         logger.info("Database connection ok; skip create_all outside dev")
 
+    # Redis 只做轻量探活，不在启动阶段执行额外预热逻辑。
     redis_ok = await test_redis_connection()
     if db_ok and redis_ok:
         logger.info("Infrastructure health check passed")
@@ -51,6 +56,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # 应用退出时统一关闭连接池。
     logger.info("Shutting down FastAPI application")
     await close_db()
     await close_redis()

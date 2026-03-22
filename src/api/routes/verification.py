@@ -157,7 +157,7 @@ async def send_verification_code(
         template_type = TEMPLATE_TYPE_MAP.get(code_type, EmailTemplateType.VERIFICATION_CODE)
 
         # 发送验证码（传入有效期）
-        await verification_service.send_verification_code(
+        send_result = await verification_service.send_verification_code(
             email=request.email,
             code_type=code_type,
             template_type=template_type,
@@ -165,8 +165,6 @@ async def send_verification_code(
         )
 
         # 获取剩余信息
-        cooldown_seconds = await verification_service.code_storage.check_cooldown(request.email)
-        daily_count = await verification_service.code_storage.get_daily_send_count(request.email)
 
         return ApiResponse(
             code=0,
@@ -174,8 +172,8 @@ async def send_verification_code(
             data=SendCodeResponse(
                 email=request.email,
                 code_type=request.code_type.value,
-                cooldown_seconds=cooldown_seconds,
-                remaining_daily_sends=settings.verification_code_max_daily_sends - daily_count,
+                cooldown_seconds=send_result["cooldown_seconds"],
+                remaining_daily_sends=settings.verification_code_max_daily_sends - send_result["daily_count"],
                 expire_minutes=settings.verification_code_expire_minutes
             )
         )
@@ -315,8 +313,9 @@ async def send_password_reset_code(
         user = result.scalars().first()
 
         # 只有当用户存在时才发送验证码
+        send_result = None
         if user:
-            await verification_service.send_verification_code(
+            send_result = await verification_service.send_verification_code(
                 email=request.email,
                 code_type=VerificationCodeType.PASSWORD_RESET,
                 template_type=EmailTemplateType.PASSWORD_RESET,
@@ -328,8 +327,8 @@ async def send_password_reset_code(
             logger.warning(f"尝试重置未注册的邮箱密码: email={request.email}")
 
         # 统一返回成功响应（无论邮箱是否存在）
-        cooldown_seconds = await verification_service.code_storage.check_cooldown(request.email)
-        daily_count = await verification_service.code_storage.get_daily_send_count(request.email)
+        cooldown_seconds = send_result["cooldown_seconds"] if send_result else 0
+        daily_count = send_result["daily_count"] if send_result else 0
 
         return ApiResponse(
             code=0,

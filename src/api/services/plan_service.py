@@ -31,6 +31,7 @@ from src.utils.strtuct import PetInformation
 
 logger = logging.getLogger(__name__)
 
+# 控制高频进度事件的落库频率，避免数据库被事件流打满。
 PROGRESS_DB_WRITE_INTERVAL_SECONDS = 1.0
 PROGRESS_DB_WRITE_DELTA = 5
 

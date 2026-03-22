@@ -1,5 +1,7 @@
 """
-V1 LangGraph builder with process-level caching.
+V1 LangGraph 构建入口。
+
+这里增加了进程级缓存，避免每次请求都重新 compile 整张图。
 """
 import asyncio
 
@@ -28,13 +30,15 @@ _compiled_v1_graph_lock = asyncio.Lock()
 
 
 async def build_v1_graph(force_rebuild: bool = False):
-    """Build and cache the compiled V1 graph for reuse across requests."""
+    """构建并缓存编译后的 V1 图，供后续请求复用。"""
     global _compiled_v1_graph
 
+    # 常规请求直接复用编译结果，减少冷启动开销。
     if _compiled_v1_graph is not None and not force_rebuild:
         return _compiled_v1_graph
 
     async with _compiled_v1_graph_lock:
+        # 双重检查，避免并发场景重复编译。
         if _compiled_v1_graph is not None and not force_rebuild:
             return _compiled_v1_graph
 
@@ -62,6 +66,7 @@ async def build_v1_graph(force_rebuild: bool = False):
         graph.add_edge("week_agent", "collect_and_structure")
         graph.add_edge("structure_report", "gather")
 
+        # 只在首次构建时编译并缓存，后续直接复用。
         compiled_graph = graph.compile()
         if not force_rebuild:
             _compiled_v1_graph = compiled_graph

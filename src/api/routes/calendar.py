@@ -1,5 +1,7 @@
 """
-Calendar routes.
+日历相关接口。
+
+周历接口已经改成单次批量查询，避免按天逐次查库。
 """
 from datetime import date, timedelta
 from typing import Optional
@@ -34,6 +36,7 @@ async def _get_owned_active_pet(
     pet_id: str,
     user_id: str,
 ) -> Pet | None:
+    """统一校验宠物归属，避免各接口重复拼接校验查询。"""
     result = await db.execute(
         select(Pet).where(
             and_(
@@ -55,6 +58,7 @@ async def get_monthly_calendar(
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
+        # 先做一次宠物归属校验，后续查询只面向当前宠物。
         pet = await _get_owned_active_pet(db, pet_id=pet_id, user_id=current_user_id)
         if not pet:
             raise HTTPException(
@@ -72,6 +76,7 @@ async def get_monthly_calendar(
         month_start = date(year, month, 1)
         month_end = date(year, month, days_in_month)
 
+        # 月历场景一次性拉取当月餐食，再按日期分组。
         meal_result = await db.execute(
             select(MealRecord).where(
                 and_(
@@ -144,6 +149,7 @@ async def get_weekly_calendar(
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
+        # 周历同样先做一次宠物归属校验。
         pet = await _get_owned_active_pet(db, pet_id=pet_id, user_id=current_user_id)
         if not pet:
             raise HTTPException(
@@ -155,6 +161,7 @@ async def get_weekly_calendar(
         start = date.fromisoformat(start_date) if start_date else today - timedelta(days=today.weekday())
         end = start + timedelta(days=6)
 
+        # 一次性查询整周餐食，替代原来的按天 N+1 查询。
         meal_result = await db.execute(
             select(MealRecord).where(
                 and_(
@@ -166,6 +173,7 @@ async def get_weekly_calendar(
         )
         week_meals = meal_result.scalars().all()
 
+        # 将结果按日期分桶，后续循环只做内存读取。
         meals_by_date: dict[date, list[MealRecord]] = {}
         for meal in week_meals:
             meals_by_date.setdefault(meal.meal_date, []).append(meal)
