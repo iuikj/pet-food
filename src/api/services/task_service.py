@@ -209,6 +209,29 @@ class TaskService:
             current_node=current_node
         )
 
+    async def update_task_progress_lightweight(
+        self,
+        task_id: str,
+        progress: int,
+        current_node: str
+    ) -> None:
+        """
+        Lightweight progress persistence for high-frequency SSE events.
+        """
+        result = await self.db.execute(
+            update(Task)
+            .where(Task.id == task_id)
+            .values(
+                status="running",
+                progress=progress,
+                current_node=current_node,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        if result.rowcount == 0:
+            raise NotFoundException("æµ è¯²å§Ÿæ¶“å¶…ç“¨é¦?")
+        await self.db.commit()
+
     async def complete_task(
         self,
         task_id: str,

@@ -31,6 +31,9 @@ from src.utils.strtuct import PetInformation
 
 logger = logging.getLogger(__name__)
 
+PROGRESS_DB_WRITE_INTERVAL_SECONDS = 1.0
+PROGRESS_DB_WRITE_DELTA = 5
+
 
 class PlanService:
     """饮食计划服务类"""
@@ -341,6 +344,11 @@ class PlanService:
                 # 流式执行 —— 通过 completed_data 截获 completed 事件
                 # 使用心跳包裹器防止长时间无事件导致连接断开
                 completed_data: Dict[str, Any] = {}
+                progress_state = {
+                    "progress": -1,
+                    "node": "",
+                    "saved_at": 0.0,
+                }
                 raw_events = stream_langgraph_execution(
                     graph, inputs, config, completed_data=completed_data, context=context
                 )
@@ -350,7 +358,10 @@ class PlanService:
                         yield event
                         continue
                     await self._update_task_progress_from_event(
-                        task_id, event, task_service=task_service
+                        task_id,
+                        event,
+                        task_service=task_service,
+                        progress_state=progress_state,
                     )
                     logger.debug("SSE event: %s", event)
                     yield event
@@ -586,6 +597,7 @@ class PlanService:
         event: str,
         *,
         task_service: "TaskService | None" = None,
+        progress_state: Dict[str, Any] | None = None,
     ):
         """
         从 SSE 事件中提取进度并更新任务
@@ -603,10 +615,36 @@ class PlanService:
                 data = json.loads(event[6:].strip())
                 progress = data.get("progress")
                 if progress is not None:
+                    progress_value = int(progress)
                     node = data.get("node", "") or data.get("type", "")
-                    await svc.update_task_progress(
-                        task_id, progress, node
+
+                    if progress_state is None:
+                        await svc.update_task_progress_lightweight(task_id, progress_value, node)
+                        return
+
+                    now = asyncio.get_running_loop().time()
+                    last_progress = progress_state.get("progress", -1)
+                    last_node = progress_state.get("node", "")
+                    last_saved = progress_state.get("saved_at", 0.0)
+                    progress_delta = abs(progress_value - last_progress) if last_progress >= 0 else progress_value
+                    progress_changed = progress_value != last_progress
+                    node_changed = node != last_node
+                    enough_time_elapsed = now - last_saved >= PROGRESS_DB_WRITE_INTERVAL_SECONDS
+                    should_persist = (
+                        last_progress < 0
+                        or progress_value >= 100
+                        or (progress_changed and progress_delta >= PROGRESS_DB_WRITE_DELTA)
+                        or (node_changed and enough_time_elapsed)
+                        or (progress_changed and enough_time_elapsed)
                     )
+
+                    if not should_persist:
+                        return
+
+                    await svc.update_task_progress_lightweight(task_id, progress_value, node)
+                    progress_state["progress"] = progress_value
+                    progress_state["node"] = node
+                    progress_state["saved_at"] = now
         except (json.JSONDecodeError, KeyError):
             pass
 
