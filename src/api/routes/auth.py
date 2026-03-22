@@ -25,11 +25,44 @@ from src.api.models.response import (
 )
 from src.api.services.auth_service import AuthService
 from src.api.utils.errors import to_http_exception, APIException
-
-# 导入认证中间件
-from src.api.middleware.auth import get_current_user, get_current_active_user
+from src.api.middleware.auth import get_current_active_user_record
+from src.db.models import User
 
 router = APIRouter()
+
+
+def _build_user_response(user: User) -> UserResponse:
+    """将用户 ORM 对象转换为标准用户响应。"""
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        nickname=user.nickname,
+        phone=user.phone,
+        avatar_url=user.avatar_url,
+        is_pro=user.is_pro or False,
+        plan_type=user.plan_type,
+        subscription_expired_at=user.subscription_expired_at,
+        is_active=user.is_active,
+        is_superuser=user.is_superuser,
+        created_at=user.created_at,
+    )
+
+
+def _build_user_profile_response(user: User) -> UserProfileResponse:
+    """提取资料页需要的用户字段，避免重复手写映射。"""
+    return UserProfileResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        nickname=user.nickname,
+        phone=user.phone,
+        avatar_url=user.avatar_url,
+        is_pro=user.is_pro or False,
+        plan_type=user.plan_type,
+        subscription_expired_at=user.subscription_expired_at,
+        created_at=user.created_at,
+    )
 
 
 @router.post("/register", response_model=ApiResponse[RegisterResponse], summary="用户注册")
@@ -161,8 +194,7 @@ async def refresh_token(
 
 @router.get("/me", response_model=ApiResponse[UserResponse], summary="获取当前用户信息")
 async def get_me(
-    current_user_id: str = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db_session)
+    current_user: User = Depends(get_current_active_user_record),
 ):
     """
     获取当前登录用户的信息
@@ -171,15 +203,10 @@ async def get_me(
     - **Authorization**: Bearer {access_token}
     """
     try:
-        auth_service = AuthService(db)
-
-        # 获取用户信息
-        user = await auth_service.get_user_by_id(current_user_id)
-
         return ApiResponse(
             code=0,
             message="获取成功",
-            data=user
+            data=_build_user_response(current_user)
         )
 
     except APIException as e:
@@ -198,7 +225,7 @@ async def get_me(
 @router.put("/profile", response_model=ApiResponse[UserProfileResponse], summary="更新用户信息")
 async def update_profile(
     request: UpdateProfileRequest,
-    current_user_id: str = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user_record),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -211,37 +238,21 @@ async def update_profile(
     - **Authorization**: Bearer {access_token}
     """
     try:
-        auth_service = AuthService(db)
-
-        # 获取用户信息
-        user = await auth_service.get_user_by_id(current_user_id)
-
         # 更新字段
         if request.nickname is not None:
-            user.nickname = request.nickname
+            current_user.nickname = request.nickname
         if request.phone is not None:
-            user.phone = request.phone
+            current_user.phone = request.phone
 
         # 提交到数据库
         await db.commit()
-        await db.refresh(user)
+        await db.refresh(current_user)
 
         # 返回更新后的用户信息
         return ApiResponse(
             code=0,
             message="更新成功",
-            data=UserProfileResponse(
-                id=user.id,
-                username=user.username,
-                email=user.email,
-                nickname=user.nickname,
-                phone=user.phone,
-                avatar_url=user.avatar_url,
-                is_pro=user.is_pro or False,
-                plan_type=user.plan_type,
-                subscription_expired_at=user.subscription_expired_at,
-                created_at=user.created_at
-            )
+            data=_build_user_profile_response(current_user)
         )
 
     except APIException as e:
@@ -261,7 +272,7 @@ async def update_profile(
 @router.post("/avatar", response_model=ApiResponse[AvatarUploadResponse], summary="上传用户头像")
 async def upload_avatar(
     file: UploadFile = File(..., description="头像文件"),
-    current_user_id: str = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user_record),
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -320,10 +331,9 @@ async def upload_avatar(
         avatar_url = f"/static/uploads/avatars/users/{filename}"
 
         # 更新用户头像
-        auth_service = AuthService(db)
-        user = await auth_service.get_user_by_id(current_user_id)
-        user.avatar_url = avatar_url
+        current_user.avatar_url = avatar_url
         await db.commit()
+        await db.refresh(current_user)
 
         return ApiResponse(
             code=0,
@@ -346,8 +356,7 @@ async def upload_avatar(
 
 @router.get("/subscription", response_model=ApiResponse[dict], summary="获取订阅状态")
 async def get_subscription(
-    current_user_id: str = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db_session)
+    current_user: User = Depends(get_current_active_user_record),
 ):
     """
     获取当前用户的订阅状态
@@ -356,28 +365,23 @@ async def get_subscription(
     - **Authorization**: Bearer {access_token}
     """
     try:
-        auth_service = AuthService(db)
-
-        # 获取用户信息
-        user = await auth_service.get_user_by_id(current_user_id)
-
         # 计算订阅状态
         now = datetime.now(timezone.utc)
         is_expired = False
         days_remaining = None
 
-        if user.subscription_expired_at:
-            is_expired = user.subscription_expired_at < now
+        if current_user.subscription_expired_at:
+            is_expired = current_user.subscription_expired_at < now
             if not is_expired:
-                days_remaining = max(0, (user.subscription_expired_at - now).days)
+                days_remaining = max(0, (current_user.subscription_expired_at - now).days)
 
         return ApiResponse(
             code=0,
             message="获取成功",
             data={
-                "is_pro": user.is_pro or False,
-                "plan_type": user.plan_type,
-                "subscription_expired_at": user.subscription_expired_at,
+                "is_pro": current_user.is_pro or False,
+                "plan_type": current_user.plan_type,
+                "subscription_expired_at": current_user.subscription_expired_at,
                 "is_expired": is_expired,
                 "days_remaining": days_remaining
             }
