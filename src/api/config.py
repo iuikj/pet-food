@@ -11,9 +11,6 @@ from pathlib import Path
 from src.api.domain.verification import CodeConfig
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-# print(f"环境变量检查:{BASE_DIR}")
-# print(f"{BASE_DIR / ".env"}")
-# print(os.getenv("ZAI_API_KEY"))   
 
 class Settings(BaseSettings):
     """FastAPI 应用配置类"""
