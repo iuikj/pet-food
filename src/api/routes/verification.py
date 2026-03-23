@@ -4,7 +4,7 @@
 """
 from typing import Optional
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 
@@ -134,11 +134,36 @@ async def get_auth_service_with_verification(
     return AuthServiceFactory.create(db, redis_client, with_verification=True)
 
 
+async def _deliver_verification_email_in_background(
+    verification_service: VerificationService,
+    *,
+    email: str,
+    code: str,
+    code_type: VerificationCodeType,
+    template_type: EmailTemplateType,
+    expire_minutes: int,
+) -> None:
+    """
+    后台发送验证码邮件。
+
+    请求主链路只负责预占验证码状态，真正 SMTP 发送放到后台执行，
+    这样可以显著降低验证码接口的尾延迟。
+    """
+    await verification_service.deliver_prepared_code(
+        email=email,
+        code=code,
+        code_type=code_type,
+        template_type=template_type,
+        expire_minutes=expire_minutes,
+    )
+
+
 # ============ 路由定义 ============
 
 @router.post("/send-code", response_model=ApiResponse[SendCodeResponse], summary="发送验证码")
 async def send_verification_code(
     request: SendCodeRequest,
+    background_tasks: BackgroundTasks,
     verification_service: VerificationService = Depends(get_verification_service)
 ):
     """
@@ -156,12 +181,21 @@ async def send_verification_code(
         # 选择邮件模板类型
         template_type = TEMPLATE_TYPE_MAP.get(code_type, EmailTemplateType.VERIFICATION_CODE)
 
-        # 发送验证码（传入有效期）
-        send_result = await verification_service.send_verification_code(
+        # 先预占验证码状态，再把实际发信放到后台，缩短接口响应时间。
+        send_result = await verification_service.prepare_verification_code(
             email=request.email,
             code_type=code_type,
             template_type=template_type,
             expire_minutes=settings.verification_code_expire_minutes
+        )
+        background_tasks.add_task(
+            _deliver_verification_email_in_background,
+            verification_service,
+            email=send_result["email"],
+            code=send_result["code"],
+            code_type=send_result["code_type"],
+            template_type=send_result["template_type"],
+            expire_minutes=send_result["expire_minutes"],
         )
 
         # 获取剩余信息
@@ -292,6 +326,7 @@ async def register_with_code(
 @router.post("/password/send-code", response_model=ApiResponse[SendCodeResponse], summary="找回密码-发送验证码")
 async def send_password_reset_code(
     request: SendCodeRequest,
+    background_tasks: BackgroundTasks,
     verification_service: VerificationService = Depends(get_verification_service),
     db: AsyncSession = Depends(get_db_session)
 ):
@@ -315,11 +350,20 @@ async def send_password_reset_code(
         # 只有当用户存在时才发送验证码
         send_result = None
         if user:
-            send_result = await verification_service.send_verification_code(
+            send_result = await verification_service.prepare_verification_code(
                 email=request.email,
                 code_type=VerificationCodeType.PASSWORD_RESET,
                 template_type=EmailTemplateType.PASSWORD_RESET,
                 expire_minutes=settings.verification_code_expire_minutes
+            )
+            background_tasks.add_task(
+                _deliver_verification_email_in_background,
+                verification_service,
+                email=send_result["email"],
+                code=send_result["code"],
+                code_type=send_result["code_type"],
+                template_type=send_result["template_type"],
+                expire_minutes=send_result["expire_minutes"],
             )
             logger.info(f"密码重置验证码已发送: email={request.email}")
         else:

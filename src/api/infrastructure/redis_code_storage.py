@@ -258,3 +258,23 @@ class RedisCodeStorage(ICodeStorage):
         except Exception as e:
             logger.error(f"获取发送次数失败: email={email}, error={e}", exc_info=True)
             raise
+
+    async def decrement_daily_send_count(self, email: str) -> int:
+        """
+        回滚当日发送次数。
+
+        邮件异步发送失败时，需要把先前预占的配额归还，避免用户被错误限流。
+        """
+        try:
+            key = self._build_daily_count_key(email)
+            count = await self.redis.decr(key)
+            if count <= 0:
+                await self.redis.delete(key)
+                logger.debug(f"发送次数已回滚到 0: email={email}")
+                return 0
+
+            logger.debug(f"发送次数已回滚: email={email}, count={count}")
+            return count
+        except Exception as e:
+            logger.error(f"回滚发送次数失败: email={email}, error={e}", exc_info=True)
+            raise

@@ -237,3 +237,21 @@ class ICodeStorage(ABC):
             StorageException: 存储失败时抛出
         """
         pass
+
+    @abstractmethod
+    async def decrement_daily_send_count(self, email: str) -> int:
+        """
+        回滚当日发送次数。
+
+        用于邮件异步发送失败后的补偿，避免失败请求也占用当天配额。
+
+        Args:
+            email: 邮箱地址
+
+        Returns:
+            int: 回滚后的发送次数，最小为 0
+
+        Raises:
+            StorageException: 存储失败时抛出
+        """
+        pass
