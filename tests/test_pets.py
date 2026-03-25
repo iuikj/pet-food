@@ -5,6 +5,8 @@
 import pytest
 from httpx import AsyncClient
 
+import src.api.routes.pets as pets_route_module
+
 
 @pytest.mark.asyncio
 class TestPetCreate:
@@ -257,3 +259,89 @@ class TestPetDelete:
             f"/api/v1/pets/{test_pet.id}", headers=second_auth_headers
         )
         assert response.status_code == 404
+
+
+class FakeMinioStorage:
+    def __init__(self):
+        self.uploaded = {}
+        self.deleted = []
+
+    def upload_file(self, object_name: str, file_data: bytes, content_type: str = "application/octet-stream") -> bool:
+        self.uploaded[object_name] = {
+            "data": file_data,
+            "content_type": content_type,
+        }
+        return True
+
+    def delete_file(self, object_name: str) -> bool:
+        self.deleted.append(object_name)
+        self.uploaded.pop(object_name, None)
+        return True
+
+    def build_object_reference(self, object_name: str) -> str:
+        return f"minio://petfood-bucket/{object_name}"
+
+    def extract_object_name(self, file_reference):
+        prefix = "minio://petfood-bucket/"
+        if not file_reference or not file_reference.startswith(prefix):
+            return None
+        return file_reference.removeprefix(prefix)
+
+    def resolve_file_url(self, file_reference):
+        object_name = self.extract_object_name(file_reference)
+        if object_name:
+            return f"https://minio.test/petfood-bucket/{object_name}"
+        return file_reference
+
+
+@pytest.mark.asyncio
+class TestPetAvatarUpload:
+    async def test_upload_pet_avatar_success(
+        self, client: AsyncClient, auth_headers: dict, test_pet, monkeypatch
+    ):
+        fake_storage = FakeMinioStorage()
+        monkeypatch.setattr(pets_route_module, "get_minio_storage", lambda: fake_storage)
+
+        response = await client.post(
+            f"/api/v1/pets/{test_pet.id}/avatar",
+            files={"file": ("avatar.png", b"fake-image-bytes", "image/png")},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code"] == 0
+        assert data["data"]["avatar_url"].startswith("https://minio.test/petfood-bucket/avatars/pets/")
+        assert len(fake_storage.uploaded) == 1
+
+    async def test_upload_pet_avatar_invalid_content_type(
+        self, client: AsyncClient, auth_headers: dict, test_pet, monkeypatch
+    ):
+        fake_storage = FakeMinioStorage()
+        monkeypatch.setattr(pets_route_module, "get_minio_storage", lambda: fake_storage)
+
+        response = await client.post(
+            f"/api/v1/pets/{test_pet.id}/avatar",
+            files={"file": ("avatar.gif", b"gif-bytes", "image/gif")},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["message"]["code"] == 5002
+        assert fake_storage.uploaded == {}
+
+    async def test_upload_pet_avatar_too_large(
+        self, client: AsyncClient, auth_headers: dict, test_pet, monkeypatch
+    ):
+        fake_storage = FakeMinioStorage()
+        monkeypatch.setattr(pets_route_module, "get_minio_storage", lambda: fake_storage)
+
+        response = await client.post(
+            f"/api/v1/pets/{test_pet.id}/avatar",
+            files={"file": ("avatar.jpg", b"a" * (2 * 1024 * 1024 + 1), "image/jpeg")},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["message"]["code"] == 5003
+        assert fake_storage.uploaded == {}

@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     smtp_from_email: str = Field(default="", description="发件人邮箱")
     smtp_use_tls: bool = Field(default=True, description="是否使用 TLS")
 
+    # ============ MinIO 配置 ============
+    minio_endpoint: str = Field(default="localhost:9000", description="MinIO端点")
+    minio_access_key: str = Field(default="minioadmin", description="MinIO访问密钥")
+    minio_secret_key: str = Field(default="minioadmin", description="MinIO秘密密钥")
+    minio_secure: bool = Field(default=False, description="是否使用HTTPS")
+    minio_bucket: str = Field(default="petfood-bucket", description="MinIO存储桶")
+
     # ============ 验证码配置 ============
     verification_code_length: int = Field(default=6, description="验证码长度")
     verification_code_expire_minutes: int = Field(default=10, description="验证码有效期（分钟）")

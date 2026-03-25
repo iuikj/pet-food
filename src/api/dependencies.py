@@ -9,6 +9,7 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 
+from src.api.infrastructure.minio_storage import MinioManager, get_minio_client
 from src.db.session import get_db
 from src.db.redis import get_redis
 
@@ -44,3 +45,10 @@ async def get_redis_client() -> redis.Redis:
     ```
     """
     return await get_redis()
+
+
+def get_minio_storage() -> MinioManager:
+    """
+    获取 MinIO 存储客户端
+    """
+    return get_minio_client()

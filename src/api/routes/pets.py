@@ -3,14 +3,14 @@
 
 处理宠物的 CRUD 操作
 """
-import os
 from typing import Optional
-from datetime import datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import get_db_session
+from src.api.dependencies import get_db_session, get_minio_storage
+from src.api.infrastructure.minio_storage import MinioManager
 from src.api.middleware.auth import get_current_user
 from src.api.models.request import CreatePetRequest, UpdatePetRequest, PetListRequest
 from src.api.models.response import (
@@ -25,7 +25,16 @@ from src.api.services.pet_service import PetService
 router = APIRouter()
 
 
-def pet_to_response(pet: "Pet", has_plan: bool = False) -> PetResponse:
+def _resolve_avatar_url(avatar_url: Optional[str], storage: MinioManager) -> Optional[str]:
+    """解析头像访问地址"""
+    return storage.resolve_file_url(avatar_url)
+
+
+def pet_to_response(
+    pet: "Pet",
+    storage: MinioManager,
+    has_plan: bool = False,
+) -> PetResponse:
     """将 Pet 实体转换为 PetResponse"""
     return PetResponse(
         id=pet.id,
@@ -36,7 +45,7 @@ def pet_to_response(pet: "Pet", has_plan: bool = False) -> PetResponse:
         age=pet.age,
         weight=float(pet.weight) if pet.weight else 0,
         gender=pet.gender,
-        avatar_url=pet.avatar_url,
+        avatar_url=_resolve_avatar_url(pet.avatar_url, storage),
         health_status=pet.health_status,
         special_requirements=pet.special_requirements,
         is_active=pet.is_active,
@@ -50,7 +59,8 @@ def pet_to_response(pet: "Pet", has_plan: bool = False) -> PetResponse:
 async def list_pets(
     is_active: Optional[bool] = Query(True, description="是否仅返回未删除的宠物"),
     current_user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_db_session),
+    storage: MinioManager = Depends(get_minio_storage)
 ):
     """
     获取当前用户的宠物列表
@@ -74,7 +84,7 @@ async def list_pets(
                 age=pet["age"],
                 weight=pet["weight"],
                 gender=pet["gender"],
-                avatar_url=pet["avatar_url"],
+                avatar_url=_resolve_avatar_url(pet["avatar_url"], storage),
                 health_status=pet["health_status"],
                 special_requirements=pet["special_requirements"],
                 is_active=pet["is_active"],
@@ -108,7 +118,8 @@ async def list_pets(
 async def create_pet(
     request: CreatePetRequest,
     current_user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_db_session),
+    storage: MinioManager = Depends(get_minio_storage)
 ):
     """
     创建新宠物
@@ -140,7 +151,7 @@ async def create_pet(
         return ApiResponse(
             code=0,
             message="创建成功",
-            data=pet_to_response(pet, has_plan=False)
+            data=pet_to_response(pet, storage=storage, has_plan=False)
         )
     except Exception as e:
         raise HTTPException(
@@ -157,7 +168,8 @@ async def create_pet(
 async def get_pet(
     pet_id: str,
     current_user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_db_session),
+    storage: MinioManager = Depends(get_minio_storage)
 ):
     """
     获取单个宠物的详细信息
@@ -192,7 +204,7 @@ async def get_pet(
         return ApiResponse(
             code=0,
             message="获取成功",
-            data=pet_to_response(pet, has_plan=plan_count > 0)
+            data=pet_to_response(pet, storage=storage, has_plan=plan_count > 0)
         )
     except HTTPException:
         raise
@@ -212,7 +224,8 @@ async def update_pet(
     pet_id: str,
     request: UpdatePetRequest,
     current_user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_db_session),
+    storage: MinioManager = Depends(get_minio_storage)
 ):
     """
     更新宠物信息
@@ -266,7 +279,7 @@ async def update_pet(
         return ApiResponse(
             code=0,
             message="更新成功",
-            data=pet_to_response(pet, has_plan=plan_count > 0)
+            data=pet_to_response(pet, storage=storage, has_plan=plan_count > 0)
         )
     except HTTPException:
         raise
@@ -338,11 +351,25 @@ async def upload_pet_avatar(
     上传宠物头像
 
     - **pet_id**: 宠物 ID
-    - **file**: 头像文件（支持 jpg, png, webp，最大 2MB）
+    - **file**: 头像文件（支持 jpg、png、webp，最大 2MB）
 
     注意：生产环境建议使用 OSS 服务
     """
+    uploaded_object_name: Optional[str] = None
     try:
+        storage = get_minio_storage()
+        pet_service = PetService(db)
+        pet = await pet_service.get_pet(current_user_id, pet_id)
+        if not pet:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": 3001,
+                    "message": "宠物不存在",
+                    "detail": None
+                }
+            )
+
         # 验证文件类型
         allowed_types = ["image/jpeg", "image/png", "image/webp"]
         if file.content_type not in allowed_types:
@@ -356,9 +383,9 @@ async def upload_pet_avatar(
             )
 
         # 验证文件大小（2MB）
-        MAX_FILE_SIZE = 2 * 1024 * 1024
+        max_file_size = 2 * 1024 * 1024
         content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
+        if len(content) > max_file_size:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -368,27 +395,43 @@ async def upload_pet_avatar(
                 }
             )
 
-        # 创建上传目录
-        upload_dir = "uploads/avatars/pets"
-        os.makedirs(upload_dir, exist_ok=True)
+        # 生成对象名
+        allowed_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+        file_ext = ""
+        if file.filename:
+            filename_parts = file.filename.rsplit(".", maxsplit=1)
+            if len(filename_parts) == 2:
+                file_ext = f".{filename_parts[1].lower()}"
+        if file_ext not in allowed_extensions:
+            content_type_to_ext = {
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+                "image/webp": ".webp",
+            }
+            file_ext = content_type_to_ext[file.content_type]
 
-        # 生成文件名
-        file_ext = os.path.splitext(file.filename)[1]
-        filename = f"{pet_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}{file_ext}"
-        file_path = os.path.join(upload_dir, filename)
+        uploaded_object_name = f"avatars/pets/{pet_id}/{uuid4().hex}{file_ext}"
+        upload_success = storage.upload_file(
+            object_name=uploaded_object_name,
+            file_data=content,
+            content_type=file.content_type,
+        )
+        if not upload_success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": 5004,
+                    "message": "头像文件上传失败",
+                    "detail": "MinIO 存储写入失败"
+                }
+            )
 
-        # 保存文件
-        with open(file_path, "wb") as f:
-            f.write(content)
-
-        # 生成访问 URL
-        avatar_url = f"/static/uploads/avatars/pets/{filename}"
-
-        # 更新宠物信息
-        pet_service = PetService(db)
-        pet = await pet_service.update_avatar(current_user_id, pet_id, avatar_url)
-
+        old_avatar_reference = pet.avatar_url
+        avatar_reference = storage.build_object_reference(uploaded_object_name)
+        pet = await pet_service.update_avatar(current_user_id, pet_id, avatar_reference)
         if not pet:
+            storage.delete_file(uploaded_object_name)
+            uploaded_object_name = None
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={
@@ -398,14 +441,33 @@ async def upload_pet_avatar(
                 }
             )
 
+        old_object_name = storage.extract_object_name(old_avatar_reference)
+        if old_object_name and old_object_name != uploaded_object_name:
+            storage.delete_file(old_object_name)
+
+        avatar_url = _resolve_avatar_url(pet.avatar_url, storage)
+        if not avatar_url:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": 5005,
+                    "message": "头像访问地址生成失败",
+                    "detail": "MinIO 预签名 URL 生成失败"
+                }
+            )
+
         return ApiResponse(
             code=0,
             message="上传成功",
             data=AvatarUploadResponse(avatar_url=avatar_url)
         )
     except HTTPException:
+        if uploaded_object_name:
+            storage.delete_file(uploaded_object_name)
         raise
     except Exception as e:
+        if uploaded_object_name:
+            storage.delete_file(uploaded_object_name)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
