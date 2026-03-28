@@ -273,7 +273,7 @@ async def collect_and_structure(state: StateV1) -> Command[Literal["structure_re
             node="structure_report",
             arg={"temp_note": note},
         )
-        for _, note in notes.items()
+        for _, note in notes.items() if note.type == "diet_plan_for_week"
     ]
 
     return Command(goto=sends)

@@ -117,7 +117,7 @@ WRITE_PROMPT = """
 请根据当前的任务的返回结果，调用`write_note`函数将笔记内容进行写入
 {task_result}
 
-如果是确切的某周宠物餐食计划，写note的type应是diet_plan
+如果是确切的某周宠物餐食计划，写note的type应是diet_plan_for_week
 请确保笔记内容是Markdown格式，且你应该对当前任务的返回结果进行概述和重写，确保语义通顺。
 文件名请使用简洁明确的名称，无需包含文件扩展名（如.md）。
 """

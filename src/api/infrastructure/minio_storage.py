@@ -15,6 +15,7 @@ from src.api.config import settings
 logger = logging.getLogger(__name__)
 
 MINIO_REFERENCE_PREFIX = "minio://"
+LOCAL_ENDPOINT_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0"}
 
 
 class MinioConfig:
@@ -26,6 +27,7 @@ class MinioConfig:
         self.secret_key = settings.minio_secret_key
         self.secure = settings.minio_secure
         self.bucket_name = settings.minio_bucket
+        self.public_endpoint = settings.minio_public_endpoint.strip()
 
     def get_client(self) -> Minio:
         """获取MinIO客户端"""
@@ -34,6 +36,40 @@ class MinioConfig:
             access_key=self.access_key,
             secret_key=self.secret_key,
             secure=self.secure,
+        )
+
+    @staticmethod
+    def _normalize_endpoint(endpoint: str, secure: bool) -> tuple[str, bool]:
+        raw_endpoint = endpoint.strip()
+        if "://" not in raw_endpoint:
+            return raw_endpoint, secure
+
+        parsed = urlparse(raw_endpoint)
+        normalized_endpoint = parsed.netloc or parsed.path
+        normalized_secure = parsed.scheme == "https"
+        return normalized_endpoint, normalized_secure
+
+    def get_presign_target(self, request_host: str | None = None) -> tuple[str, bool]:
+        """获取预签名URL使用的外部端点"""
+        if self.public_endpoint:
+            return self._normalize_endpoint(self.public_endpoint, self.secure)
+
+        endpoint, secure = self._normalize_endpoint(self.endpoint, self.secure)
+        parsed_endpoint = urlparse(f"//{endpoint}")
+
+        if request_host and parsed_endpoint.hostname in LOCAL_ENDPOINT_HOSTS:
+            endpoint = f"{request_host}:{parsed_endpoint.port}" if parsed_endpoint.port else request_host
+
+        return endpoint, secure
+
+    def get_presign_client(self, request_host: str | None = None) -> Minio:
+        """获取用于生成预签名URL的MinIO客户端"""
+        endpoint, secure = self.get_presign_target(request_host=request_host)
+        return Minio(
+            endpoint=endpoint,
+            access_key=self.access_key,
+            secret_key=self.secret_key,
+            secure=secure,
         )
 
 
@@ -181,14 +217,12 @@ class MinioManager:
         self,
         object_name: str,
         expires: timedelta = timedelta(days=7),
+        request_host: str | None = None,
     ) -> Optional[str]:
         """获取文件的预签名URL"""
         try:
-            self._ensure_initialized()
-            if self.client is None:
-                raise RuntimeError("MinIO client is not initialized")
-
-            return self.client.presigned_get_object(
+            presign_client = self.config.get_presign_client(request_host=request_host)
+            return presign_client.presigned_get_object(
                 bucket_name=self.bucket_name,
                 object_name=object_name,
                 expires=expires,
@@ -201,14 +235,12 @@ class MinioManager:
         self,
         object_name: str,
         expires: timedelta = timedelta(hours=1),
+        request_host: str | None = None,
     ) -> Optional[str]:
         """获取上传的预签名URL"""
         try:
-            self._ensure_initialized()
-            if self.client is None:
-                raise RuntimeError("MinIO client is not initialized")
-
-            return self.client.presigned_put_object(
+            presign_client = self.config.get_presign_client(request_host=request_host)
+            return presign_client.presigned_put_object(
                 bucket_name=self.bucket_name,
                 object_name=object_name,
                 expires=expires,
@@ -276,7 +308,7 @@ class MinioManager:
         _, object_name = parsed.path.split(bucket_prefix, maxsplit=1)
         return object_name or None
 
-    def resolve_file_url(self, file_reference: Optional[str]) -> Optional[str]:
+    def resolve_file_url(self, file_reference: Optional[str], request_host: str | None = None) -> Optional[str]:
         """将数据库中的文件引用解析为可访问URL"""
         if not file_reference:
             return None
@@ -285,7 +317,7 @@ class MinioManager:
         if not object_name:
             return file_reference
 
-        return self.get_file_url(object_name) or file_reference
+        return self.get_file_url(object_name, request_host=request_host) or file_reference
 
 
 def get_minio_client() -> MinioManager:

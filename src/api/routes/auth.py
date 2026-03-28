@@ -2,15 +2,16 @@
 认证路由
 处理用户注册、登录、Token 刷新、获取用户信息等请求
 """
-import os
+import mimetypes
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import get_db_session
+from src.api.dependencies import get_db_session, get_minio_storage
+from src.api.infrastructure.minio_storage import MinioManager
 from src.api.models.request import (
     RegisterRequest, LoginRequest, RefreshTokenRequest,
     UpdateProfileRequest
@@ -31,15 +32,67 @@ from src.db.models import User
 router = APIRouter()
 
 
-def _build_user_response(user: User) -> UserResponse:
+@router.get(
+    "/avatar/object/{object_name:path}",
+    include_in_schema=False,
+    name="get_user_avatar_object",
+)
+async def get_user_avatar_object(
+    object_name: str,
+    storage: MinioManager = Depends(get_minio_storage),
+):
+    """通过后端统一主机地址代理 MinIO 中的用户头像。"""
+    file_content = storage.download_file(object_name)
+    if file_content is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": 3001,
+                "message": "头像文件不存在",
+                "detail": None,
+            }
+        )
+
+    file_info = storage.get_file_info(object_name) or {}
+    media_type = (
+        file_info.get("content_type")
+        or mimetypes.guess_type(object_name)[0]
+        or "application/octet-stream"
+    )
+
+    return Response(
+        content=file_content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+def _resolve_user_avatar_url(
+    avatar_url: Optional[str],
+    storage: MinioManager,
+    request: Request | None = None,
+) -> Optional[str]:
+    """解析用户头像访问地址：优先生成后端代理 URL，否则回退到预签名 URL。"""
+    object_name = storage.extract_object_name(avatar_url)
+    if object_name and request:
+        return str(request.url_for("get_user_avatar_object", object_name=object_name))
+
+    request_host = request.url.hostname if request else None
+    return storage.resolve_file_url(avatar_url, request_host=request_host)
+
+
+def _build_user_response(user: User, storage: MinioManager | None = None, request: Request | None = None) -> UserResponse:
     """将用户 ORM 对象转换为标准用户响应。"""
+    avatar_url = user.avatar_url
+    if storage:
+        avatar_url = _resolve_user_avatar_url(avatar_url, storage, request)
     return UserResponse(
         id=user.id,
         username=user.username,
         email=user.email,
         nickname=user.nickname,
         phone=user.phone,
-        avatar_url=user.avatar_url,
+        avatar_url=avatar_url,
         is_pro=user.is_pro or False,
         plan_type=user.plan_type,
         subscription_expired_at=user.subscription_expired_at,
@@ -49,15 +102,18 @@ def _build_user_response(user: User) -> UserResponse:
     )
 
 
-def _build_user_profile_response(user: User) -> UserProfileResponse:
+def _build_user_profile_response(user: User, storage: MinioManager | None = None, request: Request | None = None) -> UserProfileResponse:
     """提取资料页需要的用户字段，避免重复手写映射。"""
+    avatar_url = user.avatar_url
+    if storage:
+        avatar_url = _resolve_user_avatar_url(avatar_url, storage, request)
     return UserProfileResponse(
         id=user.id,
         username=user.username,
         email=user.email,
         nickname=user.nickname,
         phone=user.phone,
-        avatar_url=user.avatar_url,
+        avatar_url=avatar_url,
         is_pro=user.is_pro or False,
         plan_type=user.plan_type,
         subscription_expired_at=user.subscription_expired_at,
@@ -194,7 +250,9 @@ async def refresh_token(
 
 @router.get("/me", response_model=ApiResponse[UserResponse], summary="获取当前用户信息")
 async def get_me(
+    http_request: Request,
     current_user: User = Depends(get_current_active_user_record),
+    storage: MinioManager = Depends(get_minio_storage),
 ):
     """
     获取当前登录用户的信息
@@ -206,7 +264,7 @@ async def get_me(
         return ApiResponse(
             code=0,
             message="获取成功",
-            data=_build_user_response(current_user)
+            data=_build_user_response(current_user, storage, http_request)
         )
 
     except APIException as e:
@@ -224,9 +282,11 @@ async def get_me(
 
 @router.put("/profile", response_model=ApiResponse[UserProfileResponse], summary="更新用户信息")
 async def update_profile(
+    http_request: Request,
     request: UpdateProfileRequest,
     current_user: User = Depends(get_current_active_user_record),
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_db_session),
+    storage: MinioManager = Depends(get_minio_storage),
 ):
     """
     更新当前用户的信息
@@ -252,7 +312,7 @@ async def update_profile(
         return ApiResponse(
             code=0,
             message="更新成功",
-            data=_build_user_profile_response(current_user)
+            data=_build_user_profile_response(current_user, storage, http_request)
         )
 
     except APIException as e:
@@ -271,9 +331,11 @@ async def update_profile(
 
 @router.post("/avatar", response_model=ApiResponse[AvatarUploadResponse], summary="上传用户头像")
 async def upload_avatar(
+    http_request: Request,
     file: UploadFile = File(..., description="头像文件"),
     current_user: User = Depends(get_current_active_user_record),
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_db_session),
+    storage: MinioManager = Depends(get_minio_storage),
 ):
     """
     上传用户头像
@@ -282,9 +344,8 @@ async def upload_avatar(
 
     需要在请求头中携带有效的访问令牌：
     - **Authorization**: Bearer {access_token}
-
-    注意：生产环境建议使用 OSS 服务
     """
+    uploaded_object_name: Optional[str] = None
     try:
         # 验证文件类型
         allowed_types = ["image/jpeg", "image/png", "image/webp"]
@@ -299,9 +360,9 @@ async def upload_avatar(
             )
 
         # 验证文件大小（2MB）
-        MAX_FILE_SIZE = 2 * 1024 * 1024
+        max_file_size = 2 * 1024 * 1024
         content = await file.read()
-        if len(content) > MAX_FILE_SIZE:
+        if len(content) > max_file_size:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -311,29 +372,61 @@ async def upload_avatar(
                 }
             )
 
-        # 创建上传目录
-        upload_dir = "uploads/avatars/users"
-        os.makedirs(upload_dir, exist_ok=True)
-
-        # 安全生成文件名：使用 uuid4 避免路径注入，白名单扩展名
+        # 推导文件扩展名
         allowed_extensions = {".jpg", ".jpeg", ".png", ".webp"}
-        file_ext = os.path.splitext(file.filename or "")[1].lower()
+        file_ext = ""
+        if file.filename:
+            parts = file.filename.rsplit(".", maxsplit=1)
+            if len(parts) == 2:
+                file_ext = f".{parts[1].lower()}"
         if file_ext not in allowed_extensions:
-            file_ext = ".jpg"  # 默认扩展名
-        filename = f"{uuid4().hex}{file_ext}"
-        file_path = os.path.join(upload_dir, filename)
+            content_type_to_ext = {
+                "image/jpeg": ".jpg",
+                "image/png": ".png",
+                "image/webp": ".webp",
+            }
+            file_ext = content_type_to_ext[file.content_type]
 
-        # 保存文件
-        with open(file_path, "wb") as f:
-            f.write(content)
+        # 上传至 MinIO
+        uploaded_object_name = f"avatars/users/{current_user.id}/{uuid4().hex}{file_ext}"
+        upload_success = storage.upload_file(
+            object_name=uploaded_object_name,
+            file_data=content,
+            content_type=file.content_type,
+        )
+        if not upload_success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": 5004,
+                    "message": "头像文件上传失败",
+                    "detail": "MinIO 存储写入失败"
+                }
+            )
 
-        # 生成访问 URL
-        avatar_url = f"/static/uploads/avatars/users/{filename}"
-
-        # 更新用户头像
-        current_user.avatar_url = avatar_url
+        # 更新数据库
+        old_avatar_reference = current_user.avatar_url
+        avatar_reference = storage.build_object_reference(uploaded_object_name)
+        current_user.avatar_url = avatar_reference
         await db.commit()
         await db.refresh(current_user)
+
+        # 清理旧头像
+        old_object_name = storage.extract_object_name(old_avatar_reference)
+        if old_object_name and old_object_name != uploaded_object_name:
+            storage.delete_file(old_object_name)
+
+        # 解析为可访问 URL
+        avatar_url = _resolve_user_avatar_url(current_user.avatar_url, storage, request=http_request)
+        if not avatar_url:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": 5005,
+                    "message": "头像访问地址生成失败",
+                    "detail": "MinIO 预签名 URL 生成失败"
+                }
+            )
 
         return ApiResponse(
             code=0,
@@ -342,8 +435,12 @@ async def upload_avatar(
         )
 
     except HTTPException:
+        if uploaded_object_name:
+            storage.delete_file(uploaded_object_name)
         raise
     except Exception as e:
+        if uploaded_object_name:
+            storage.delete_file(uploaded_object_name)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={

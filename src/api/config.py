@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     minio_secret_key: str = Field(default="minioadmin", description="MinIO秘密密钥")
     minio_secure: bool = Field(default=False, description="是否使用HTTPS")
     minio_bucket: str = Field(default="petfood-bucket", description="MinIO存储桶")
+    minio_public_endpoint: str = Field(default="", description="MinIO外部访问端点")
 
     # ============ 验证码配置 ============
     verification_code_length: int = Field(default=6, description="验证码长度")

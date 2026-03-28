@@ -75,7 +75,7 @@ def create_week_write_note_tool() -> BaseTool:
         # state: Annotated[WeekAgentState, InjectedState],
     ):
         # 周计划笔记固定为 diet_plan 类型
-        note = Note(content=content, type="diet_plan")
+        note = Note(content=content, type="diet_plan_for_week")
         # 直接写入 `note`（WeekAgentOutput 的输出 key），
         # 而非中间的 `week_note`，确保输出链路不断
         return Command(

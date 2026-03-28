@@ -6,6 +6,7 @@ import pytest
 from httpx import AsyncClient
 
 import src.api.routes.pets as pets_route_module
+import src.api.infrastructure.minio_storage as minio_storage_module
 
 
 @pytest.mark.asyncio
@@ -287,11 +288,37 @@ class FakeMinioStorage:
             return None
         return file_reference.removeprefix(prefix)
 
-    def resolve_file_url(self, file_reference):
+    def resolve_file_url(self, file_reference, request_host=None):
         object_name = self.extract_object_name(file_reference)
         if object_name:
-            return f"https://minio.test/petfood-bucket/{object_name}"
+            host_prefix = request_host or "minio.test"
+            return f"https://{host_prefix}/petfood-bucket/{object_name}"
         return file_reference
+
+    def download_file(self, object_name: str):
+        stored = self.uploaded.get(object_name)
+        if not stored:
+            return None
+        return stored["data"]
+
+    def get_file_info(self, object_name: str):
+        stored = self.uploaded.get(object_name)
+        if not stored:
+            return None
+        return {
+            "object_name": object_name,
+            "content_type": stored["content_type"],
+        }
+
+
+class FakePresignMinioClient:
+    def __init__(self, endpoint: str, access_key: str, secret_key: str, secure: bool):
+        self.endpoint = endpoint
+        self.secure = secure
+
+    def presigned_get_object(self, bucket_name: str, object_name: str, expires):
+        scheme = "https" if self.secure else "http"
+        return f"{scheme}://{self.endpoint}/{bucket_name}/{object_name}"
 
 
 @pytest.mark.asyncio
@@ -311,8 +338,26 @@ class TestPetAvatarUpload:
         assert response.status_code == 200
         data = response.json()
         assert data["code"] == 0
-        assert data["data"]["avatar_url"].startswith("https://minio.test/petfood-bucket/avatars/pets/")
+        assert data["data"]["avatar_url"].startswith("http://test/api/v1/pets/avatar/object/avatars/pets/")
         assert len(fake_storage.uploaded) == 1
+
+    async def test_get_pet_avatar_object_success(
+        self, client: AsyncClient, monkeypatch
+    ):
+        fake_storage = FakeMinioStorage()
+        object_name = "avatars/pets/demo/avatar.png"
+        fake_storage.uploaded[object_name] = {
+            "data": b"fake-image-bytes",
+            "content_type": "image/png",
+        }
+        monkeypatch.setattr(pets_route_module, "get_minio_storage", lambda: fake_storage)
+
+        response = await client.get(f"/api/v1/pets/avatar/object/{object_name}")
+
+        assert response.status_code == 200
+        assert response.content == b"fake-image-bytes"
+        assert response.headers["content-type"].startswith("image/png")
+        assert response.headers["cache-control"] == "public, max-age=3600"
 
     async def test_upload_pet_avatar_invalid_content_type(
         self, client: AsyncClient, auth_headers: dict, test_pet, monkeypatch
@@ -345,3 +390,31 @@ class TestPetAvatarUpload:
         assert response.status_code == 400
         assert response.json()["message"]["code"] == 5003
         assert fake_storage.uploaded == {}
+
+
+class TestMinioPresignEndpoint:
+    def test_get_file_url_uses_request_host_when_endpoint_is_localhost(self, monkeypatch):
+        monkeypatch.setattr(minio_storage_module, "Minio", FakePresignMinioClient)
+
+        config = minio_storage_module.MinioConfig()
+        config.endpoint = "localhost:9000"
+        config.secure = False
+        config.public_endpoint = ""
+
+        storage = minio_storage_module.MinioManager(config=config)
+        file_url = storage.get_file_url("avatars/pets/demo.png", request_host="10.16.48.216")
+
+        assert file_url == "http://10.16.48.216:9000/petfood-bucket/avatars/pets/demo.png"
+
+    def test_get_file_url_prefers_public_endpoint(self, monkeypatch):
+        monkeypatch.setattr(minio_storage_module, "Minio", FakePresignMinioClient)
+
+        config = minio_storage_module.MinioConfig()
+        config.endpoint = "localhost:9000"
+        config.secure = False
+        config.public_endpoint = "https://cdn.example.com:9443"
+
+        storage = minio_storage_module.MinioManager(config=config)
+        file_url = storage.get_file_url("avatars/pets/demo.png", request_host="10.16.48.216")
+
+        assert file_url == "https://cdn.example.com:9443/petfood-bucket/avatars/pets/demo.png"

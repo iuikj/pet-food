@@ -34,7 +34,7 @@ def note_reducer(left: dict | None, right: dict | None):
 class Note(BaseModel):
     # title: str
     content: str
-    type: Literal["research", "diet_plan","diet_plan_summary"]
+    type: Literal["research", "diet_plan_for_week","diet_plan_summary"]
 
 
 class NoteStateMixin(TypedDict):
