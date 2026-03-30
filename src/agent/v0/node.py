@@ -1,15 +1,16 @@
 from typing import Literal, cast
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
 from langchain_dev_utils.chat_models import load_chat_model
+from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, Send
 
 from src.agent.common.entity.note import Note
-from src.agent.v0.state import State
 from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.utils.struct import PetDietPlan, MonthlyDietPlan
+from src.agent.v0.state import State
 from src.agent.v0.tools import (
     ls,
     query_note,
@@ -19,7 +20,6 @@ from src.agent.v0.tools import (
     write_plan,
 )
 from src.agent.v0.utils.context import resolve_v0_context
-from src.agent.common.utils.struct import PetDietPlan, MonthlyDietPlan
 
 
 async def call_model(state: State, config: RunnableConfig) -> Command[Literal["tools", "subagent", "structure_report"]]:

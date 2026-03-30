@@ -9,16 +9,15 @@ from typing import Literal, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
 from langchain_dev_utils.chat_models import load_chat_model
+from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 
-from src.agent.common.entity.note import Note
 from src.agent.common.stream_events import ProgressEventType, emit_progress
 from src.agent.common.tools import tavily_search
 from src.agent.v1.models import WeekAssignment
-from src.agent.v1.utils.context import ContextV1, resolve_context
+from src.agent.v1.utils.context import resolve_context
 from src.agent.v1.week_agent.state import WeekAgentState
 from src.agent.v1.week_agent.tools import (
     create_query_shared_note_tool,

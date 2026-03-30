@@ -10,7 +10,6 @@ __start__ → week_planner ←→ week_tools (循环搜索/查询)
 """
 from langgraph.graph.state import StateGraph
 
-from src.agent.v1.week_agent.state import WeekAgentState, WeekAgentInput, WeekAgentOutput
 from src.agent.v1.week_agent.node import (
     week_planner,
     week_write,
@@ -18,6 +17,7 @@ from src.agent.v1.week_agent.node import (
     week_tools,
     week_write_tool,
 )
+from src.agent.v1.week_agent.state import WeekAgentState, WeekAgentInput, WeekAgentOutput
 
 
 def build_week_agent():

@@ -9,11 +9,10 @@ gather: 汇总所有周计划生成最终报告
 import logging
 from typing import Literal, cast
 
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
 from langchain_dev_utils.chat_models import load_chat_model
-from src.agent.common.utils.format import message_format
+from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, Send
 
@@ -22,7 +21,6 @@ from src.agent.common.stream_events import ProgressEventType, emit_progress
 from src.agent.common.utils.struct import PetDietPlan, MonthlyDietPlan
 from src.agent.v1.models import CoordinationGuide
 from src.agent.v1.state import StateV1
-from src.utils.strtuct import PetInformation
 from src.agent.v1.tools import (
     ls,
     query_note,
@@ -30,9 +28,9 @@ from src.agent.v1.tools import (
     finish_sub_plan,
     read_plan_tool,
     write_plan,
-    finalize_research,
 )
-from src.agent.v1.utils.context import ContextV1, resolve_context
+from src.agent.v1.utils.context import resolve_context
+from src.utils.strtuct import PetInformation
 
 logger = logging.getLogger(__name__)
 

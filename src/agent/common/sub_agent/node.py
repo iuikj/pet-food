@@ -2,17 +2,17 @@ from typing import Literal, cast
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
 from langchain_dev_utils.chat_models import load_chat_model
+from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_calling
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 
+from src.agent.common.context import resolve_subgraph_context
 from src.agent.common.entity.note import create_query_note_tool
 from src.agent.common.stream_events import ProgressEventType, emit_progress
 from src.agent.common.sub_agent.state import SubAgentState
 from src.agent.common.tools import get_weather, tavily_search
 from src.agent.common.utils.format import message_format
-from src.agent.common.context import resolve_subgraph_context
 
 # 在模块级别创建工具实例
 query_note = create_query_note_tool(

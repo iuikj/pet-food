@@ -3,7 +3,6 @@ V1 主图工具
 
 复用 common 工厂函数创建笔记和计划管理工具，新增 finalize_research 工具。
 """
-from typing import Annotated
 
 from langchain_core.tools import tool
 
@@ -11,10 +10,6 @@ from src.agent.common.entity.note import (
     create_write_note_tool,
     create_ls_tool,
     create_query_note_tool,
-)
-from src.agent.common.tools import (
-    transfor_task_to_subagent,
-    tavily_search,
 )
 from src.agent.common.entity.plan import (
     create_write_plan_tool,

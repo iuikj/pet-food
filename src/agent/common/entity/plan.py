@@ -1,11 +1,10 @@
 import json
-from typing import Awaitable, Callable, Literal, NotRequired, Optional, cast
+from typing import Literal, NotRequired, Optional
 
 from langchain.tools import BaseTool, ToolRuntime, tool
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 from typing_extensions import TypedDict
-from pydantic import BaseModel
 
 _DEFAULT_WRITE_PLAN_TOOL_DESCRIPTION = """Use this tool to create and manage a structured task list for complex or multi-step work. It helps you stay organized, track progress, and demonstrate to the user that you're handling tasks systematically.
 

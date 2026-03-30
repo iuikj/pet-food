@@ -5,10 +5,10 @@ from langchain_core.runnables import RunnableConfig
 from langchain_dev_utils.chat_models import load_chat_model
 from langgraph.prebuilt import ToolNode
 
+from src.agent.common.context import resolve_subgraph_context
 from src.agent.common.entity.note import create_write_note_tool
 from src.agent.common.stream_events import ProgressEventType, emit_progress
 from src.agent.common.write_agent.state import WriteState
-from src.agent.common.context import resolve_subgraph_context
 
 # 在模块级别创建工具实例
 write_note = create_write_note_tool(

@@ -3,14 +3,13 @@ V1 周 Agent 工具
 
 每个 week_agent 实例拥有独立的搜索和笔记写入工具。
 """
-from typing import Annotated, Literal
+from typing import Annotated
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool
 from langgraph.types import Command
 
 from src.agent.common.entity.note import Note
-from src.agent.common.tools import tavily_search
 
 
 def create_query_shared_note_tool() -> BaseTool:
@@ -56,8 +55,6 @@ def create_week_write_note_tool() -> BaseTool:
         from langchain.agents.tool_node import InjectedState  # type: ignore
     except ImportError:
         from langgraph.prebuilt.tool_node import InjectedState
-
-    from src.agent.v1.week_agent.state import WeekAgentState
 
     @tool(
         name_or_callable="week_write_note",
