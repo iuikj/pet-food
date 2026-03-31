@@ -2,12 +2,12 @@ import logging
 from dataclasses import dataclass
 from typing import Annotated
 
-from src.agent.common.prompts.prompt import (
+from src.agent.v2.prompts.sub_agent_prompt import (
     SUBAGENT_PROMPT,
     SUMMARY_PROMPT,
     WRITE_PROMPT,
 )
-from src.agent.v1.prompts.prompt import (
+from src.agent.v2.prompts.agent_prompt import (
     RESEARCH_PLANNER_PROMPT,
     COORDINATION_GUIDE_PROMPT,
     WEEK_PLANNER_PROMPT,
@@ -23,7 +23,7 @@ class ContextTest:
 
 @dataclass
 class ContextV2:
-    pet_information: Annotated[PetInformation, "宠物信息"]
+    pet_information: Annotated[PetInformation, "宠物信息"]=None
     # ── 模型配置 ──
     plan_model: Annotated[str, "研究规划器模型"] = "dashscope:qwen3.5-plus"
     sub_model: Annotated[str, "子智能体模型"] = "dashscope:qwen3.5-plus"
