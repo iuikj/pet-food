@@ -6,7 +6,7 @@ from typing_extensions import NotRequired
 
 from src.agent.common.entity.note import NoteStateMixin
 from src.agent.common.utils.struct import PetDietPlan, WeeklyDietPlan
-from src.agent.v1.models import CoordinationGuide
+from src.agent.v1.models import CoordinationGuide, WeekAssignment
 from src.agent.v2.middlewares.note_middleware import Note, note_reducer
 from src.utils.strtuct import PetInformation
 
@@ -27,3 +27,14 @@ class State(AgentState, total=False):
     # 最终报告
     report: Annotated[PetDietPlan, "报告"]
     note: NotRequired[Annotated[dict[str, Note], note_reducer]]
+
+
+class WeekAgentState(AgentState, total=False):
+    """周 Agent 内部完整状态"""
+    # ── 只读输入（由 dispatch_weeks 通过 Send 传入）──
+    pet_information: PetInformation
+    week_assignment: WeekAssignment
+    shared_notes: dict[str, Note]
+    shared_constraints: list[str]
+    ingredient_rotation_strategy: str
+    age_adaptation_note: str

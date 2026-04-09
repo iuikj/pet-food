@@ -15,8 +15,3 @@ websearch_sub_agent=SubAgent(
     middleware=[NoteMiddleware(),sub_agent_prompt]
 )
 
-websearch_sub_agent_complied=CompiledSubAgent(
-    description="你是一个信息搜索子agent,当有网络搜索的时候作为补充,同时进行",
-    name="websearch_sub_agent_complied",
-    runnable=build_sub_agent()
-)

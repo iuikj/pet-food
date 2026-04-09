@@ -32,9 +32,7 @@ RESEARCH_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + """
 **重要：不要把"制定第X周饮食计划"作为子任务，这不是你的职责。**  
 
 ### 2. 执行研究  
-将每个子任务委派给 sub agent 执行：  
-- 每完成一个任务后用 `update_plan` 更新状态  
-- 可以用 `ls` 和 `query_note` 查看已有笔记  
+将每个子任务委派给 sub agent 执行,能够并行的时候必须并行：   
 
 ### 3. 结束研究  
 当所有研究任务完成后，**必须调用 `finalize_research` 工具**来结束研究阶段。  
@@ -114,10 +112,7 @@ WEEK_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + DIET_PLAN_OUTPUT_CONTRACT + """
 ## 可用的调研笔记  
 {shared_notes_list}  
 
-## 执行要求  
-1. 先使用 `query_shared_note` 查询相关调研笔记获取背景知识  
-2. 使用 `tavily_search` 搜索本周特定主题的食材和营养信息（**仅限调用一次**）  
-3. 基于信息制定完整的第{week_number}周饮食计划  
+你必须使用skill:week-diet-planner 来完成计划的制定
 
 ## 饮食计划报告模板  
 饮食原则  
@@ -158,8 +153,7 @@ WEEK_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + DIET_PLAN_OUTPUT_CONTRACT + """
 - [建议1]  
 - [建议2]  
 
-## 重要提醒  
-- 工具使用约束：**tavily_search** 仅限调用一次  
+## 重要提醒   
 - 计划完成后请直接输出完整的饮食计划内容，不需要调用工具  
 - 所有营养素必须包含具体数值和单位  
 """

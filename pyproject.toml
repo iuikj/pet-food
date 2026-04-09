@@ -41,6 +41,7 @@ dependencies = [
     "annotated",
     "note",
     "awaitable",
+    "send",
 ]
 
 [dependency-groups]

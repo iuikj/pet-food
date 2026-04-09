@@ -4,12 +4,12 @@ from langchain.agents.middleware import TodoListMiddleware, ModelRequest, ModelR
 
 from langchain.agents.middleware.types import ResponseT, ExtendedModelResponse
 from langchain.messages import SystemMessage,AIMessage
-from langchain_core.messages import filter_messages
-
-
+from langchain_core.messages import filter_messages, HumanMessage
 
 from langgraph.typing import ContextT
 
+from src.agent.v1.models import WeekAssignment
+from src.agent.v2.state import State, WeekAgentState
 from src.agent.v2.utils.context import ContextV2
 from collections.abc import Awaitable, Callable
 
@@ -89,6 +89,50 @@ async def coordination_agent_prompt(
     )
     return await handler(
         request.override(
-            system_message=SystemMessage(content=new_content)
+            system_message=SystemMessage(content=new_content),
+            # messages=[]
+        )
+    )
+@wrap_model_call(
+    state_schema=WeekAgentState
+)
+async def week_agent_prompt(
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
+) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+    ctx:ContextV2 = request.runtime.context
+    state:WeekAgentState=request.state
+    assignment: WeekAssignment = state["week_assignment"]
+    week_num = assignment.week_number
+    info = ctx.pet_information
+    shared_notes = state.get("shared_notes") or {}
+
+
+    # 构建提示词
+    shared_notes_list = (
+        "\n".join(f"- {name}" for name in shared_notes.keys())
+        if shared_notes
+        else "（暂无共享笔记）"
+    )
+
+    prompt = ctx.week_planner_prompt.format(
+        week_number=week_num,
+        pet_information=info,
+        theme=assignment.theme,
+        focus_nutrients=", ".join(assignment.focus_nutrients),
+        constraints="\n".join(f"- {c}" for c in assignment.constraints),
+        differentiation_note=assignment.differentiation_note,
+        search_keywords=", ".join(assignment.search_keywords),
+        shared_constraints="\n".join(
+            f"- {c}" for c in (state.get("shared_constraints") or [])
+        ),
+        ingredient_rotation_strategy=state.get("ingredient_rotation_strategy", ""),
+        age_adaptation_note=state.get("age_adaptation_note", ""),
+        shared_notes_list=shared_notes_list,
+    )
+    return await handler(
+        request.override(
+            system_message=None,
+            messages=[HumanMessage(content=prompt),HumanMessage(content="请你使用week-diet-planner这个skill来完成")]
         )
     )

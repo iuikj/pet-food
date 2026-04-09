@@ -2,7 +2,7 @@ import logging
 import os
 from typing import List
 
-from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
+from langchain_core.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_community.document_compressors.dashscope_rerank import DashScopeRerank
 from langchain_core.documents import Document
 from langchain_milvus import Milvus, BM25BuiltInFunction
@@ -182,7 +182,6 @@ class MilvusManager:
         schema.add_field(field_name="pk", datatype=DataType.INT64, is_primary=True)
         schema.add_field(field_name="dense", datatype=DataType.FLOAT_VECTOR)
         schema.add_field(field_name="sparse", datatype=DataType.SPARSE_FLOAT_VECTOR)
-        schema.add_field()
 
     async def show_schema(self):
         """
