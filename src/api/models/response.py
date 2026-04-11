@@ -337,3 +337,67 @@ class NutritionAnalysisResponse(BaseModel):
     daily_data: list[DailyNutritionData]
     trend_chart: TrendChart
     ai_insights: list[AIInsight]
+
+
+# ==================== 待办事项 ====================
+
+
+class TodoPriority(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class TodoCategory(str, Enum):
+    FEEDING = "feeding"
+    HEALTH = "health"
+    GROOMING = "grooming"
+    SHOPPING = "shopping"
+    OTHER = "other"
+
+
+class CreateTodoRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = None
+    pet_id: Optional[str] = None
+    due_date: str = Field(..., description="YYYY-MM-DD")
+    due_time: Optional[str] = Field(None, description="HH:MM")
+    is_all_day: bool = True
+    priority: TodoPriority = TodoPriority.MEDIUM
+    category: TodoCategory = TodoCategory.OTHER
+
+
+class UpdateTodoRequest(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    description: Optional[str] = None
+    pet_id: Optional[str] = None
+    due_date: Optional[str] = None
+    due_time: Optional[str] = None
+    is_all_day: Optional[bool] = None
+    priority: Optional[TodoPriority] = None
+    category: Optional[TodoCategory] = None
+
+
+class TodoItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    user_id: str
+    pet_id: Optional[str] = None
+    pet_name: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    due_date: str
+    due_time: Optional[str] = None
+    is_all_day: bool = True
+    is_completed: bool = False
+    completed_at: Optional[datetime] = None
+    priority: str = "medium"
+    category: str = "other"
+    created_at: datetime
+    updated_at: datetime
+
+
+class TodoListResponse(BaseModel):
+    total: int
+    items: list[TodoItemResponse]

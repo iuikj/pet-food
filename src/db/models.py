@@ -52,6 +52,11 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan"
     )
+    todos: Mapped[list["TodoItem"]] = relationship(
+        "TodoItem",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
 
 
 class Task(Base):
@@ -128,6 +133,11 @@ class Pet(Base):
     )
     weight_records: Mapped[list["WeightRecord"]] = relationship(
         "WeightRecord",
+        back_populates="pet",
+        cascade="all, delete-orphan"
+    )
+    todos: Mapped[list["TodoItem"]] = relationship(
+        "TodoItem",
         back_populates="pet",
         cascade="all, delete-orphan"
     )
@@ -355,3 +365,47 @@ class Supplement(Base):
     __table_args__ = (
         Index("idx_supplement_category", "category"),
     )
+
+
+class TodoItem(Base):
+    """待办事项表"""
+    __tablename__ = "todo_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    pet_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("pets.id"), nullable=True, index=True)
+
+    # 待办内容
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # 时间
+    due_date: Mapped[date_type] = mapped_column(Date, nullable=False)
+    due_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)  # "HH:MM"
+    is_all_day: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # 状态
+    is_completed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # 分类与优先级
+    priority: Mapped[str] = mapped_column(String(10), default="medium")  # low / medium / high
+    category: Mapped[str] = mapped_column(String(20), default="other")   # feeding / health / grooming / shopping / other
+
+    # 时间戳
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    # 索引
+    __table_args__ = (
+        Index("idx_todo_user_date", "user_id", "due_date"),
+        Index("idx_todo_pet", "pet_id"),
+    )
+
+    # 关系
+    user: Mapped["User"] = relationship("User", back_populates="todos")
+    pet: Mapped[Optional["Pet"]] = relationship("Pet", back_populates="todos")
