@@ -21,6 +21,7 @@ dependencies = [
     # 数据库
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30.0",
+    "psycopg2-binary>=2.9.0",  # Agent 工具同步驱动（绕过 langgraph dev blockbuster）
     "alembic>=1.14.0",
     # Redis
     "redis>=5.2.1",

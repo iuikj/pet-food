@@ -16,14 +16,10 @@ from src.utils.strtuct import PetInformation
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class ContextTest:
-    test="test"
-
 
 @dataclass
 class ContextV2:
-    pet_information: Annotated[PetInformation, "宠物信息"]=None
+    pet_information: Annotated[PetInformation, "宠物信息"] = None
     # ── 模型配置 ──
     plan_model: Annotated[str, "研究规划器模型"] = "dashscope:qwen3.5-plus"
     sub_model: Annotated[str, "子智能体模型"] = "dashscope:qwen3.5-plus"
