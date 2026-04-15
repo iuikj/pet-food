@@ -21,7 +21,7 @@ dependencies = [
     # 数据库
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30.0",
-    "psycopg2-binary>=2.9.0",  # Agent 工具同步驱动（绕过 langgraph dev blockbuster）
+    "psycopg2-binary>=2.9.0", # Agent 工具同步驱动（绕过 langgraph dev blockbuster）
     "alembic>=1.14.0",
     # Redis
     "redis>=5.2.1",
@@ -32,7 +32,7 @@ dependencies = [
     # 邮箱验证
     "pydantic[email]>=2.11.9",
     "langchain-dev-utils>=1.4.6",
-    "deepagents>=0.4.8",
+    "deepagents>=0.5.0",
     "minio==7.2.0",
     "langchain>=1.2.10",
     "langchain-community>=0.4.1",
@@ -43,6 +43,7 @@ dependencies = [
     "note",
     "awaitable",
     "send",
+    "agentstate",
 ]
 
 [dependency-groups]

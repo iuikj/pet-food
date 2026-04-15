@@ -1,15 +1,15 @@
 
-from langchain.agents.middleware import TodoListMiddleware, ModelRequest, ModelResponse, AgentMiddleware, \
-    wrap_model_call,dynamic_prompt
+from langchain.agents.middleware import ModelRequest, ModelResponse, wrap_model_call
 from deepagents.middleware._utils import append_to_system_message
 from langchain.agents.middleware.types import ResponseT, ExtendedModelResponse
-from langchain.messages import SystemMessage,AIMessage
+from langchain.messages import AIMessage
 from langchain_core.messages import filter_messages, HumanMessage
 
 from langgraph.typing import ContextT
 
 from src.agent.v1.models import WeekAssignment
 from src.agent.v2.state import State, WeekAgentState
+from src.agent.v2.middlewares.note_middleware import Note
 from src.agent.v2.utils.context import ContextV2
 from collections.abc import Awaitable, Callable
 
@@ -30,16 +30,9 @@ async def sub_agent_prompt(
     )
     return await handler(
         request.override(
-            system_message=append_to_system_message(request.system_message, new_content)
+            system_message=append_to_system_message(request.system_message, new_content),
         )
     )
-    # return await handler(
-    #     request.override(
-    #         system_message=SystemMessage(
-    #             content=new_content
-    #         )
-    #     )
-    # )
 
 
 @wrap_model_call
@@ -51,26 +44,33 @@ async def plan_agent_prompt(
     new_content = ctx.research_planner_prompt.format(
         pet_information=ctx.pet_information,
     )
+    # messages=request.state['messages']
+    # if messages[-1].role == "human":
+    #     messages[-1]=HumanMessage(
+    #         content="/research-memory"+messages[-1].content,
+    #     )
+
+
     return await handler(
         request.override(
-            system_message=append_to_system_message(request.system_message, new_content)
+            system_message=append_to_system_message(request.system_message, new_content),
         )
     )
 
-@wrap_model_call
+@wrap_model_call(state_schema=State)
 async def coordination_agent_prompt(
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
-)-> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
     ctx: ContextV2 = request.runtime.context
-    messages=request.messages
+    messages = request.messages
     print(len(messages))
     messages = filter_messages(
         messages=messages,
         include_types=["tool"],
         include_names=["task"]
     )
-    notes=[s.content for s in messages]
+    notes = [s.content for s in messages]
     new_content = ctx.coordination_guide_prompt.format(
         pet_information=ctx.pet_information,
         research_notes=notes
@@ -80,6 +80,22 @@ async def coordination_agent_prompt(
             system_message=append_to_system_message(request.system_message, new_content)
         )
     )
+
+
+@wrap_model_call
+async def structure_report_prompt(
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
+) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+    ctx: ContextV2 = request.runtime.context
+    new_content = ctx.structure_report_prompt
+    return await handler(
+        request.override(
+            system_message=append_to_system_message(request.system_message, new_content)
+        )
+    )
+
+
 @wrap_model_call(
     state_schema=WeekAgentState
 )
@@ -119,6 +135,6 @@ async def week_agent_prompt(
     )
     return await handler(
         request.override(
-            system_message=append_to_system_message(request.system_message, new_content)
+            system_message=append_to_system_message(request.system_message, new_content),
         )
     )

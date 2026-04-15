@@ -5,6 +5,7 @@
 完全绕过 langgraph dev 的 blockbuster 对 asyncpg os.getcwd() 的拦截。
 使用同步 psycopg2 驱动，线程安全。
 """
+import json
 from typing import Annotated, Optional
 
 from langchain.tools import tool
@@ -118,10 +119,36 @@ async def ingredient_search_tool(
 
     rows = await run_query(stmt)
 
-    if not rows:
-        return [{"info": "未找到符合条件的食材，请尝试放宽筛选条件。"}]
+    # 构建筛选条件描述
+    filters = []
+    if keyword:
+        filters.append(f"关键词='{keyword}'")
+    if category:
+        filters.append(f"类别='{category}'")
+    if sub_category:
+        filters.append(f"子类别='{sub_category}'")
+    if protein_min is not None:
+        filters.append(f"蛋白质≥{protein_min}g")
+    if fat_max is not None:
+        filters.append(f"脂肪≤{fat_max}g")
+    filter_desc = ", ".join(filters) if filters else "无特定筛选"
 
-    return [_row_to_dict(row, detail=False) for row in rows]
+    if not rows:
+        return f"未找到符合条件的食材。搜索条件: {filter_desc}。请尝试放宽筛选条件。"
+
+    items = []
+    for row in rows:
+        d = _row_to_dict(row, detail=False)
+        items.append(
+            f"- {d['name']} ({d['category']}/{d.get('sub_category', '')}): "
+            f"蛋白质 {d['protein_g']}g, 脂肪 {d['fat_g']}g, "
+            f"碳水 {d['carbohydrates_g']}g, 热量 {d['calories_kcal']}kcal (每100g)"
+        )
+
+    return (
+        f"食材搜索完成（条件: {filter_desc}），共找到 {len(rows)} 种食材：\n"
+        + "\n".join(items)
+    )
 
 
 @tool
@@ -135,8 +162,27 @@ async def ingredient_detail_tool(
     row = await run_query(stmt, one=True)
 
     if row is None:
-        return {"error": f"食材 '{name}' 不存在，请检查名称是否正确。"}
-    return _row_to_dict(row, detail=True)
+        return f"食材详情查询失败 — 食材 '{name}' 不存在，请检查名称是否正确。"
+
+    d = _row_to_dict(row, detail=True)
+    summary = (
+        f"食材详情查询完成 — {d['name']}（{d['category']}/{d.get('sub_category', '')}）:\n"
+        f"每100g可食部分：热量 {d['calories_kcal']}kcal, 蛋白质 {d['protein_g']}g, "
+        f"脂肪 {d['fat_g']}g, 碳水 {d['carbohydrates_g']}g, "
+        f"膳食纤维 {d.get('dietary_fiber_g', 'N/A')}g\n"
+        f"矿物质: 钙 {d.get('calcium_mg', 'N/A')}mg, 磷 {d.get('phosphorus_mg', 'N/A')}mg, "
+        f"铁 {d.get('iron_mg', 'N/A')}mg, 锌 {d.get('zinc_mg', 'N/A')}mg, "
+        f"钠 {d.get('sodium_mg', 'N/A')}mg, 钾 {d.get('potassium_mg', 'N/A')}mg\n"
+        f"维生素: A {d.get('vitamin_a_iu', 'N/A')}IU, D {d.get('vitamin_d_iu', 'N/A')}IU, "
+        f"E {d.get('vitamin_e_mg', 'N/A')}mg\n"
+    )
+    if d.get('taurine_mg') is not None:
+        summary += f"牛磺酸: {d['taurine_mg']}mg\n"
+    if d.get('epa_dha_mg') is not None:
+        summary += f"EPA+DHA: {d['epa_dha_mg']}mg\n"
+
+    summary += f"\n完整数据: {json.dumps(d, ensure_ascii=False)}"
+    return summary
 
 
 @tool
@@ -157,7 +203,11 @@ async def ingredient_categories_tool() -> list[dict]:
 
     rows = await run_query(stmt, scalars=False)
 
-    return [
-        {"category": r.category, "sub_category": r.sub_category, "count": r.count}
-        for r in rows
-    ]
+    if not rows:
+        return "食材分类查询完成，数据库中暂无食材数据。"
+
+    lines = [f"食材分类查询完成，共 {len(rows)} 个分类：\n"]
+    for r in rows:
+        lines.append(f"- {r.category}/{r.sub_category}: {r.count} 种食材")
+
+    return "\n".join(lines)

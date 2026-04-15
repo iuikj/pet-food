@@ -29,11 +29,8 @@ async def rag_search_tool(
     #     for doc in results
     # ]
 
-    return [{
-        "content": (
-            f"[RAG 占位] 未找到关于 '{query}' 的知识库内容。"
-            "请使用 ingredient_search_tool 查询食材数据库，"
-            "或使用 nutrition_requirement_tool 获取营养标准。"
-        ),
-        "source": "placeholder",
-    }]
+    return (
+        f"知识库检索完成（占位） — 未找到关于 '{query}' 的知识库内容。\n"
+        f"建议使用 ingredient_search_tool 查询食材数据库，"
+        f"或使用 nutrition_requirement_tool 获取营养标准。"
+    )

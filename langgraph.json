@@ -6,6 +6,7 @@
         "pet_food": "./src/agent/v0/graph.py:build_graph_with_langgraph_studio",
         "pet_food_v1": "./src/agent/v1/graph.py:build_v1_graph",
         "pet_food_v2": "./src/agent/v2/graph.py:graph",
-        "week_agent": "./src/agent/v2/node.py:week_agent"
+        "week_agent": "./src/agent/v2/node.py:week_agent",
+        "plan_agent": "./src/agent/v2/node.py:plan_agent_with_sub"
     }
 }

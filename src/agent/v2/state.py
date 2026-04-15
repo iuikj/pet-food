@@ -35,6 +35,7 @@ class WeekAgentState(AgentState, total=False):
     pet_information: PetInformation
     week_assignment: WeekAssignment
     shared_notes: dict[str, Note]
+    spec_notes:dict[str, Note]
     shared_constraints: list[str]
     ingredient_rotation_strategy: str
     age_adaptation_note: str

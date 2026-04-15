@@ -122,7 +122,7 @@ async def daily_calorie_tool(
     age_months: Annotated[int, "宠物年龄(月龄)"],
     activity_level: Annotated[Literal["low", "moderate", "high"], "活动水平"] = "moderate",
     health_status: Annotated[str, "健康状况描述"] = "",
-) -> dict:
+):
     """计算宠物每日热量需求和宏量营养素目标。
 
     基于 AAHA 指南 RER 公式: RER = 70 × (体重kg)^0.75,
@@ -141,27 +141,20 @@ async def daily_calorie_tool(
     fat_g = round((daily_calories * ratios["fat_opt"]) / 9, 1)
     carb_g = round((daily_calories * ratios["carb_opt"]) / 4, 1)
 
-    return {
-        "rer_kcal": round(rer, 1),
-        "daily_calories_kcal": daily_calories,
-        "life_stage": life_stage,
-        "activity_factor": round(factor, 2),
-        "protein_g": protein_g,
-        "fat_g": fat_g,
-        "carb_g": carb_g,
-        "protein_range_g": {
-            "min": round((daily_calories * ratios["protein_min"]) / 4, 1),
-            "max": round((daily_calories * ratios["protein_max"]) / 4, 1),
-        },
-        "fat_range_g": {
-            "min": round((daily_calories * ratios["fat_min"]) / 9, 1),
-            "max": round((daily_calories * ratios["fat_max"]) / 9, 1),
-        },
-        "calculation_basis": (
-            f"RER={round(rer, 1)}kcal × 系数{round(factor, 2)} "
-            f"(生命阶段:{life_stage}, 活动:{activity_level})"
-        ),
-    }
+    protein_min = round((daily_calories * ratios["protein_min"]) / 4, 1)
+    protein_max = round((daily_calories * ratios["protein_max"]) / 4, 1)
+    fat_min = round((daily_calories * ratios["fat_min"]) / 9, 1)
+    fat_max = round((daily_calories * ratios["fat_max"]) / 9, 1)
+
+    return (
+        f"热量计算完成。基于 RER 公式 (70 × {weight_kg}^0.75)：\n"
+        f"- 基础代谢 (RER): {round(rer, 1)} kcal\n"
+        f"- 每日总热量需求 (DER): {daily_calories} kcal\n"
+        f"  (生命阶段: {life_stage}, 活动系数: {round(factor, 2)}, 活动水平: {activity_level})\n"
+        f"- 蛋白质推荐: {protein_g}g (范围: {protein_min}-{protein_max}g)\n"
+        f"- 脂肪推荐: {fat_g}g (范围: {fat_min}-{fat_max}g)\n"
+        f"- 碳水推荐: {carb_g}g"
+    )
 
 
 @tool
@@ -177,17 +170,13 @@ async def nutrition_requirement_tool(
     base = MICRONUTRIENT_REQUIREMENTS.get(pet_type, MICRONUTRIENT_REQUIREMENTS["dog"])
     scale = daily_calories / 1000.0
 
-    result = {}
+    lines = [f"微量营养素需求计算完成（基于 AAFCO 标准，按 {daily_calories} kcal/天缩放）：\n"]
     for key, per_1000kcal in base.items():
-        # 从 "calcium_mg" 拆出 "calcium" 和 "mg"
         parts = key.rsplit("_", 1)
         name = parts[0]
         unit = parts[1] if len(parts) > 1 else ""
-        result[name] = {
-            "min_daily": round(per_1000kcal * scale, 2),
-            "unit": unit,
-        }
+        min_daily = round(per_1000kcal * scale, 2)
+        lines.append(f"- {name}: 每日最低 {min_daily} {unit}")
 
-    # 补充钙磷比说明
-    result["calcium_phosphorus_ratio"] = "1.2:1 ~ 1.4:1"
-    return result
+    lines.append(f"\n钙磷比推荐: 1.2:1 ~ 1.4:1")
+    return "\n".join(lines)

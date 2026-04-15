@@ -11,6 +11,7 @@ from src.agent.v2.prompts.agent_prompt import (
     RESEARCH_PLANNER_PROMPT,
     COORDINATION_GUIDE_PROMPT,
     WEEK_PLANNER_PROMPT,
+    STRUCTURE_REPORT_PROMPT,
 )
 from src.utils.strtuct import PetInformation
 
@@ -43,5 +44,6 @@ class ContextV2:
 
     # Phase 3: 结构化
     report_prompt: Annotated[str, "结构化报告提示词"] = "请你根据我给出的内容生成结构化报告"
+    structure_report_prompt: Annotated[str, "结构化解析提示词"] = STRUCTURE_REPORT_PROMPT
 
 
