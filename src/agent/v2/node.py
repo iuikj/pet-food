@@ -10,6 +10,7 @@ import asyncio
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend, CompositeBackend, StateBackend
+from deepagents.backends.protocol import FileData
 from langchain.agents import create_agent
 
 from langchain_core.messages import HumanMessage
@@ -17,7 +18,7 @@ from langchain_dev_utils.chat_models import load_chat_model
 from langgraph.runtime import get_runtime
 from langgraph.types import Command, Send
 
-from typing import Literal
+from typing import Literal,Dict
 
 from src.agent.common.stream_events import ProgressEventType, emit_progress
 from src.agent.common.utils.struct import (
@@ -76,6 +77,9 @@ plan_agent_with_sub = create_deep_agent(
 
 # ── Phase 1→2: 协调指南生成 ──
 
+
+
+
 async def generate_coordination_guide(state: State):
     coordination_agent = create_agent(
         model=load_chat_model(ContextV2.plan_model),
@@ -95,38 +99,25 @@ async def generate_coordination_guide(state: State):
 async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
     guide: CoordinationGuide = state["coordination_guide"]
     ctx: ContextV2 = get_runtime().context
-
-    # 提取研究笔记用于 week_agent 参考
-    notes: dict[str, Note] = state.get("note", {})
-    research_notes = {
-        k: v for k, v in notes.items()
-        if hasattr(v, 'type') and v.type == "research"
-    }
-    # 如果没有 research 类型的笔记，传递所有笔记
-    shared_notes = research_notes if research_notes else notes
+    # 提取所有临时调研笔记
 
     sends = []
     for assignment in guide.weekly_assignments:
+
         sends.append(
             Send(
                 node="week_agent",
                 arg={
                     "pet_information": ctx.pet_information,
                     "week_assignment": assignment,
-                    "shared_notes": shared_notes,
+                    "shared_notes": {},
                     "shared_constraints": guide.shared_constraints,
                     "ingredient_rotation_strategy": guide.ingredient_rotation_strategy,
                     "age_adaptation_note": guide.age_adaptation_note,
+                    "files": state['files']
                 },
             )
         )
-
-    emit_progress(
-        ProgressEventType.DISPATCHING,
-        f"正在分发 {len(sends)} 个周计划任务",
-        node="dispatch_weeks",
-        progress=40,
-    )
 
     return Command(goto=sends)
 
@@ -155,6 +146,7 @@ week_agent = create_deep_agent(
     skills=["/skills/"],
     middleware=[week_agent_prompt,trigger_week_agent],
     context_schema=ContextV2,
+    response_format=WeeklyDietPlan,
 )
 
 

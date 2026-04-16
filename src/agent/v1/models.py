@@ -19,6 +19,11 @@ class WeekAssignment(BaseModel):
     search_keywords: list[str] = Field(
         description="建议的搜索关键词，供 week_agent 使用 tavily_search"
     )
+    relevant_research_notes: list[str] = Field(
+        default_factory=list,
+        description="与本周相关的临时调研笔记文件名列表（来自 /temp_notes/），"
+                    "如 ['笔记总结_金毛营养需求.md', '调研_软便饮食方案.md']",
+    )
 
 
 class CoordinationGuide(BaseModel):

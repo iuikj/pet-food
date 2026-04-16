@@ -14,6 +14,18 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "agentstate"
+version = "1.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/06/8a/29332426e1632601b41eeb90c1ec13e3f764d02b772196593dbdb44d5e56/agentstate-1.0.2.tar.gz", hash = "sha256:2578877862efb692a4f3e467211eeca34b2a1f0a0260301c9577592c5d8c8d0d", size = 5815, upload-time = "2025-08-22T19:22:03.621Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/f9/fcd813b63645fd7108ef32741062f826c706af1a960f47564e3cdbad4eb9/agentstate-1.0.2-py3-none-any.whl", hash = "sha256:48375add0cfee4ecb6bb09bbb37f564d3b027e471cc635b2e354f5d32c6d3bce", size = 6026, upload-time = "2025-08-22T19:22:02.245Z" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2568,6 +2580,7 @@ name = "pet-food"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "agentstate" },
     { name = "aiosmtplib" },
     { name = "alembic" },
     { name = "annotated" },
@@ -2612,6 +2625,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agentstate" },
     { name = "aiosmtplib", specifier = ">=3.0.2" },
     { name = "alembic", specifier = ">=1.14.0" },
     { name = "annotated" },

@@ -1,6 +1,8 @@
 import operator
 from typing import Annotated
 
+from deepagents.middleware.filesystem import _file_data_reducer
+from deepagents.backends.protocol import FileData
 from langchain.agents import AgentState
 from typing_extensions import NotRequired
 
@@ -26,6 +28,7 @@ class State(AgentState, total=False):
     weekly_diet_plans: Annotated[list[WeeklyDietPlan], operator.add]
     # 最终报告
     report: Annotated[PetDietPlan, "报告"]
+    files: Annotated[NotRequired[dict[str, FileData]], _file_data_reducer]
     note: NotRequired[Annotated[dict[str, Note], note_reducer]]
 
 
@@ -35,7 +38,7 @@ class WeekAgentState(AgentState, total=False):
     pet_information: PetInformation
     week_assignment: WeekAssignment
     shared_notes: dict[str, Note]
-    spec_notes:dict[str, Note]
+    files: Annotated[NotRequired[dict[str, FileData]], _file_data_reducer]
     shared_constraints: list[str]
     ingredient_rotation_strategy: str
     age_adaptation_note: str

@@ -12,6 +12,8 @@ from src.agent.v2.state import State, WeekAgentState
 from src.agent.v2.middlewares.note_middleware import Note
 from src.agent.v2.utils.context import ContextV2
 from collections.abc import Awaitable, Callable
+from typing import Dict
+from deepagents.backends.protocol import FileData
 
 
 
@@ -57,23 +59,48 @@ async def plan_agent_prompt(
         )
     )
 
+
+
+def _extract_temp_notes(state) -> Dict[str,FileData]|None:
+    """从 state['files'] 中提取 /temp_notes/ 下的临时笔记内容。
+
+    state['files'] 是 DeepAgents FileData 字典：
+    键为相对路径（如 "/temp_notes/调研_软便饮食方案.md"），
+    值为 FileData TypedDict（含 content, encoding 等字段）。
+    """
+    files: Dict[str,FileData]|None = state.get("files", {})
+    temp_notes = {}
+    if files:
+        for file_name,file_data in files.items():
+            temp_notes[file_name]=file_data["content"]
+        return temp_notes
+    return None
+
+
 @wrap_model_call(state_schema=State)
 async def coordination_agent_prompt(
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
 ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
     ctx: ContextV2 = request.runtime.context
-    messages = request.messages
-    print(len(messages))
-    messages = filter_messages(
-        messages=messages,
-        include_types=["tool"],
-        include_names=["task"]
-    )
-    notes = [s.content for s in messages]
+    state: State = request.state
+
+
+    temp_notes: Dict[str,FileData]|None = _extract_temp_notes(request.state)
+
+
+    # 构建调研笔记文本
+    if temp_notes:
+        notes_parts = []
+        for name, content in temp_notes.items():
+            notes_parts.append(f"### file name: {name}\n{content}")
+        notes_text = "\n\n".join(notes_parts)
+    else:
+        notes_text = "（暂无调研笔记）"
+
     new_content = ctx.coordination_guide_prompt.format(
         pet_information=ctx.pet_information,
-        research_notes=notes
+        research_notes=notes_text,
     )
     return await handler(
         request.override(
@@ -108,15 +135,15 @@ async def week_agent_prompt(
     assignment: WeekAssignment = state["week_assignment"]
     week_num = assignment.week_number
     info = ctx.pet_information
-    shared_notes = state.get("shared_notes") or {}
 
-
-    # 构建提示词
-    shared_notes_list = (
-        "\n".join(f"- {name}" for name in shared_notes.keys())
-        if shared_notes
-        else "（暂无共享笔记）"
-    )
+    # # 构建调研笔记内容（来自 dispatch_weeks 分配的 research_note_contents）
+    # research_notes: dict[str, str] = state.get("research_note_contents") or {}
+    # if research_notes:
+    #     research_notes_text = "\n\n".join(
+    #         f"### {name}\n{content}" for name, content in research_notes.items()
+    #     )
+    # else:
+    #     research_notes_text = "（暂无调研笔记）"
 
     new_content = ctx.week_planner_prompt.format(
         week_number=week_num,
@@ -131,7 +158,7 @@ async def week_agent_prompt(
         ),
         ingredient_rotation_strategy=state.get("ingredient_rotation_strategy", ""),
         age_adaptation_note=state.get("age_adaptation_note", ""),
-        shared_notes_list=shared_notes_list,
+        research_notes=assignment.relevant_research_notes,
     )
     return await handler(
         request.override(

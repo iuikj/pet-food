@@ -80,6 +80,7 @@ COORDINATION_GUIDE_PROMPT = PET_INFO_UNIT_NOTE + """
    - constraints: 本周饮食约束
    - differentiation_note: 与其他周的差异说明
    - search_keywords: 建议搜索关键词
+   - relevant_research_notes: 与本周相关的调研笔记文件名列表（从上方调研笔记中选取对该周有参考价值的）
 
 3. **shared_constraints**: 所有周共享的约束（过敏、禁忌等）
 
@@ -121,8 +122,10 @@ WEEK_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + DIET_PLAN_OUTPUT_CONTRACT + """
 ## 年龄适应说明
 {age_adaptation_note}
 
-## 可用的调研笔记
-{shared_notes_list}
+## 相关的调研笔记名,在/temp_notes/下（由协调阶段分配给本周）
+<research_notes>
+{research_notes}
+</research_notes>
 
 ## 工作流程
 ** 直接调用 week-diet-planner 这个 skill **，严格按照 skill 中定义的 7 步流程执行。
