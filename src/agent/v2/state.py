@@ -10,6 +10,7 @@ from src.agent.common.entity.note import NoteStateMixin
 from src.agent.common.utils.struct import PetDietPlan, WeeklyDietPlan
 from src.agent.v1.models import CoordinationGuide, WeekAssignment
 from src.agent.v2.middlewares.note_middleware import Note, note_reducer
+from src.agent.v2.models import WeekLightPlan
 from src.utils.strtuct import PetInformation
 
 
@@ -24,7 +25,9 @@ class StateV2Output(AgentState):
 class State(AgentState, total=False):
     # 研究阶段完成后生成的协调指南
     coordination_guide: CoordinationGuide
-    # 结构化周计划（由 structure_report 写入，operator.add 支持并行合并）
+    # 各并行 week_agent 产出的轻量周计划（Phase 3 的输入）
+    week_light_plans: Annotated[list[WeekLightPlan], operator.add]
+    # 结构化周计划（保留旧字段兼容 v1 下游消费者；Phase 3 仍会写入）
     weekly_diet_plans: Annotated[list[WeeklyDietPlan], operator.add]
     # 最终报告
     report: Annotated[PetDietPlan, "报告"]

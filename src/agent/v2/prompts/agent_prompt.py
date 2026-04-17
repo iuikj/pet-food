@@ -100,7 +100,7 @@ COORDINATION_GUIDE_PROMPT = PET_INFO_UNIT_NOTE + """
 # Phase 2: week_agent — 周计划生成
 # ──────────────────────────────────────────────────────────────
 
-WEEK_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + DIET_PLAN_OUTPUT_CONTRACT + """
+WEEK_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + """
 你是一个专业的AI宠物营养师，负责制定**第{week_number}周**的具体饮食计划。
 
 ## 宠物信息
@@ -128,32 +128,26 @@ WEEK_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + DIET_PLAN_OUTPUT_CONTRACT + """
 </research_notes>
 
 ## 工作流程
-** 直接调用 week-diet-planner 这个 skill **，严格按照 skill 中定义的 7 步流程执行。
+**直接调用 week-diet-planner 这个 skill**，严格按照 skill 中定义的 7 步流程执行。
 
-## 饮食计划报告模板
-饮食原则
-- [原则1]
-- [原则2]
+## 最终输出
+- 你已被配置 `response_format=WeekLightPlan`；思考/工具调用完成后，最后一条消息**直接输出符合 WeekLightPlan 的结构化 JSON**。
+- `ingredient_name` 必须与 `ingredient_detail_tool` / `ingredient_search_tool` 返回的名称**完全一致**。
+- **不要**在输出里写每克食材的微量营养素数值；Phase 3 会从数据库按 per-100g × 克数自动计算。
+- **不要**输出 Markdown 报告，不要调用已废弃的 `write_week_plan` 工具。
+- `meals` 描述的是"每日菜单"——周内 7 天共用此菜单，无需重复 7 次。
 
-第{week_number}周每日食谱（统一执行7天）
-
-第j餐（[时间]）
-[菜名]
-- 食材：[食材名] [份量]g（来源：数据库查询）
-- 烹饪方式：[详细步骤]
-- 营养素含量：
-  - 蛋白质：[数值]g
-  - 脂肪：[数值]g
-  - [其他营养素]：[数值][单位]
-
-每日总营养素
-- 总热量：[数值]kcal
-- 蛋白质总量：[数值]g
-- 脂肪总量：[数值]g
-- 微量营养素汇总
-
-特别说明
-配套建议
+### 字段要求速查
+- `week_number`: 第几周（1-4），等于当前 WeekAssignment 的周序号
+- `diet_adjustment_principle`: 本周原则，2-4 句
+- `meals[].oder`: 从 1 开始的第几餐
+- `meals[].time`: 如 "08:00"
+- `meals[].cook_method`: 烹饪方式一句话
+- `meals[].ingredients[].ingredient_name`: 精确命中 DB
+- `meals[].ingredients[].weight_g`: 克数（> 0）
+- `meals[].ingredients[].recommend_reason`: 可空
+- `weekly_special_adjustment_note`: 可空
+- `suggestions`: 可空列表
 """
 
 

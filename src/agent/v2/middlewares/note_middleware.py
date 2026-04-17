@@ -76,7 +76,7 @@ def create_write_note_tool(
     )
     def write_note(
             content: Annotated[str, "the content of the note"],
-            type: Annotated[Literal["research", "diet_plan", "diet_plan_summary"], "the type of the note"],
+            type: Annotated[Literal["research", "diet_plan_for_week", "diet_plan_summary"], "the type of the note"],
             file_name: Annotated[str, "the name of the note"],
             tool_call_id: Annotated[str, InjectedToolCallId],
             state: Annotated[NoteState, InjectedState],

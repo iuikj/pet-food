@@ -3,27 +3,28 @@ V2 Agent 节点定义
 
 Phase 1: plan_agent (create_deep_agent) — 研究阶段
 Phase 1→2: generate_coordination_guide (create_agent + response_format) — 协调指南
-Phase 2: dispatch_weeks → week_agent (create_deep_agent) x4 — 并行周计划
-Phase 3: gather_and_structure — 结构化汇总
+Phase 2: dispatch_weeks → week_agent (create_deep_agent, response_format=WeekLightPlan) x4 — 并行周计划
+Phase 3: gather_and_structure — 纯 Python 组装 + 可选 1 次 LLM 生成 ai_suggestions
 """
 import asyncio
+import logging
+from pathlib import Path
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend, CompositeBackend, StateBackend
-from deepagents.backends.protocol import FileData
 from langchain.agents import create_agent
-
-from langchain_core.messages import HumanMessage
+from langchain.agents.middleware import after_agent
+from langchain.messages import HumanMessage
 from langchain_dev_utils.chat_models import load_chat_model
-from langgraph.runtime import get_runtime
+from langgraph.runtime import Runtime, get_runtime
 from langgraph.types import Command, Send
 
-from typing import Literal,Dict
+from typing import Any, Literal
 
 from src.agent.common.stream_events import ProgressEventType, emit_progress
 from src.agent.common.utils.struct import (
-    PetDietPlan,
     MonthlyDietPlan,
+    PetDietPlan,
     WeeklyDietPlan,
 )
 from src.agent.v1.models import CoordinationGuide
@@ -31,20 +32,57 @@ from src.agent.v2.middlewares.dynamic_prompt_middleware import (
     plan_agent_prompt,
     coordination_agent_prompt,
     week_agent_prompt,
-    structure_report_prompt,
 )
-from src.agent.v2.middlewares.note_middleware import NoteMiddleware, Note
-from src.agent.v2.middlewares.tirgger_middleware import trigger_plan_agent,trigger_week_agent
-
+from src.agent.v2.middlewares.progress_middleware import (
+    plan_progress_middleware,
+    week_progress_middleware,
+)
+from src.agent.v2.middlewares.trigger_middleware import (
+    trigger_plan_agent,
+    trigger_week_agent,
+)
+from src.agent.v2.models import WeekLightPlan
 from src.agent.v2.state import State, WeekAgentState
 from src.agent.v2.sub_agents.web_search_agent import websearch_sub_agent
 from src.agent.v2.sub_agents.nutrition_calc_agent import nutrition_calc_sub_agent
 from src.agent.v2.sub_agents.ingredient_query_agent import ingredient_query_sub_agent
 from src.agent.v2.tools import WEEK_AGENT_TOOLS
+from src.agent.v2.utils.assemble import (
+    assemble_weekly_plan,
+    collect_ingredient_names,
+    fetch_ingredients_by_names,
+)
 from src.agent.v2.utils.context import ContextV2
 
+logger = logging.getLogger(__name__)
 
-# ── Phase 1: plan_agent ──
+
+# ──────────────────────────── 路径常量（可移植） ────────────────────────────
+
+_V2_DIR = Path(__file__).resolve().parent
+_SKILLS_DIR = _V2_DIR / "files" / "skills"
+_NOTEBOOKS_DIR = _V2_DIR / "files" / "notebooks"
+
+
+def _make_backend() -> CompositeBackend:
+    """构建 CompositeBackend：skills / memory_notes 走文件系统，temp_notes 走 State。"""
+    return CompositeBackend(
+        default=StateBackend(),
+        routes={
+            "/skills/": FilesystemBackend(
+                root_dir=str(_SKILLS_DIR),
+                virtual_mode=True,
+            ),
+            "/memory_notes/": FilesystemBackend(
+                root_dir=str(_NOTEBOOKS_DIR),
+                virtual_mode=True,
+            ),
+            "/temp_notes/": StateBackend(),
+        },
+    )
+
+
+# ──────────────────────────── Phase 1: plan_agent ────────────────────────────
 
 plan_agent_with_sub = create_deep_agent(
     name="plan_agent",
@@ -54,33 +92,22 @@ plan_agent_with_sub = create_deep_agent(
         nutrition_calc_sub_agent,
         ingredient_query_sub_agent,
     ],
-    backend=CompositeBackend(
-        default=StateBackend(),
-        routes={
-            "/skills/": FilesystemBackend(
-                root_dir=r"E:\Graduate\pet_food_backend\pet-food\src\agent\v2\files\skills",
-                virtual_mode=True,
-            ),
-            "/memory_notes/": FilesystemBackend(
-                root_dir=r"E:\Graduate\pet_food_backend\pet-food\src\agent\v2\files\notebooks",
-                virtual_mode=True,
-            ),
-            "/temp_notes/":StateBackend()
-
-        },
-    ),
+    backend=_make_backend(),
     skills=["/skills/"],
-    middleware=[plan_agent_prompt,trigger_plan_agent],
+    middleware=[plan_agent_prompt, trigger_plan_agent, plan_progress_middleware],
     context_schema=ContextV2,
 )
 
 
-# ── Phase 1→2: 协调指南生成 ──
-
-
-
+# ──────────────────────────── Phase 1→2: 协调指南生成 ────────────────────────────
 
 async def generate_coordination_guide(state: State):
+    emit_progress(
+        ProgressEventType.RESEARCH_FINALIZING,
+        "根据调研笔记生成四周差异化协调指南",
+        node="generate_coordination_guide",
+        progress=30,
+    )
     coordination_agent = create_agent(
         model=load_chat_model(ContextV2.plan_model),
         middleware=[coordination_agent_prompt],
@@ -88,22 +115,35 @@ async def generate_coordination_guide(state: State):
         context_schema=ContextV2,
         state_schema=State,
     )
-    response = await coordination_agent.ainvoke(input=state)
+    # 用精简的 seed message 触发，避免 plan_agent 阶段累积的大量工具消息污染
+    response = await coordination_agent.ainvoke(
+        input={
+            **state,
+            "messages": [
+                HumanMessage(content="请根据 system prompt 中提供的调研笔记，生成 CoordinationGuide。")
+            ],
+        }
+    )
     return {
         "coordination_guide": response["structured_response"],
     }
 
 
-# ── Phase 2: dispatch_weeks ──
+# ──────────────────────────── Phase 2: dispatch_weeks ────────────────────────────
 
 async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
     guide: CoordinationGuide = state["coordination_guide"]
     ctx: ContextV2 = get_runtime().context
-    # 提取所有临时调研笔记
 
-    sends = []
+    emit_progress(
+        ProgressEventType.DISPATCHING,
+        f"向 {len(guide.weekly_assignments)} 个并行 week_agent 分发任务",
+        node="dispatch_weeks",
+        progress=40,
+    )
+
+    sends: list[Send] = []
     for assignment in guide.weekly_assignments:
-
         sends.append(
             Send(
                 node="week_agent",
@@ -114,104 +154,141 @@ async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
                     "shared_constraints": guide.shared_constraints,
                     "ingredient_rotation_strategy": guide.ingredient_rotation_strategy,
                     "age_adaptation_note": guide.age_adaptation_note,
-                    "files": state['files']
+                    "files": state.get("files") or {},
                 },
             )
         )
-
     return Command(goto=sends)
 
 
-# ── Phase 2: week_agent ──
+# ──────────────────────────── Phase 2: week_agent ────────────────────────────
+
+@after_agent
+def collect_week_light_plan(state: Any, runtime: Runtime) -> dict | None:
+    """把 week_agent 的 structured_response 归集到父图的 week_light_plans。
+
+    父 State 的 `week_light_plans` 用 operator.add 合并，4 个并行 week_agent
+    各返回一个长度 1 的列表即可正确汇总为 4 条。
+    """
+    sr = None
+    if isinstance(state, dict):
+        sr = state.get("structured_response")
+    else:
+        sr = getattr(state, "structured_response", None)
+    if isinstance(sr, WeekLightPlan):
+        return {"week_light_plans": [sr]}
+    return None
+
 
 week_agent = create_deep_agent(
     name="week_agent",
     model=load_chat_model(ContextV2.week_model),
     tools=WEEK_AGENT_TOOLS,
-    backend=CompositeBackend(
-        default=StateBackend(),
-        routes={
-            "/skills/": FilesystemBackend(
-                root_dir=r"E:\Graduate\pet_food_backend\pet-food\src\agent\v2\files\skills",
-                virtual_mode=True,
-            ),
-            "/memory_notes/": FilesystemBackend(
-                root_dir=r"E:\Graduate\pet_food_backend\pet-food\src\agent\v2\files\notebooks",
-                virtual_mode=True,
-            ),
-            "/temp_notes/": StateBackend()
-
-        },
-    ),
+    backend=_make_backend(),
     skills=["/skills/"],
-    middleware=[week_agent_prompt,trigger_week_agent],
+    middleware=[
+        week_agent_prompt,
+        trigger_week_agent,
+        week_progress_middleware,
+        collect_week_light_plan,
+    ],
     context_schema=ContextV2,
-    response_format=WeeklyDietPlan,
+    response_format=WeekLightPlan,
 )
 
 
-# ── Phase 3: gather_and_structure ──
+# ──────────────────────────── Phase 3: 纯 Python 组装 + 可选 ai_suggestions ────────────────────────────
+
+_AI_SUGGESTIONS_PROMPT = (
+    "你是一个宠物营养师。以下是为一只宠物制定好的月度（4 周）饮食计划原则与每周餐次。"
+    "请用 1-2 段话、面向宠物主人，给出整体执行建议，强调饮水、过渡、禁忌与监测。不要重复罗列食材清单。\n\n"
+)
+
+
+async def _generate_ai_suggestions(
+    weekly_plans: list[WeeklyDietPlan], model_name: str
+) -> str:
+    """可选的 1 次 LLM 调用，生成 PetDietPlan.ai_suggestions。失败时返回兜底文案。"""
+    try:
+        summary_lines: list[str] = []
+        for w in weekly_plans:
+            meal_names = []
+            for m in w.weekly_diet_plan.daily_diet_plans:
+                names = ",".join(f.name for f in m.food_items)
+                meal_names.append(f"第{m.oder}餐({m.time}){names}")
+            summary_lines.append(
+                f"第{w.oder}周 原则: {w.diet_adjustment_principle} | 菜单: {'; '.join(meal_names)}"
+            )
+        prompt = _AI_SUGGESTIONS_PROMPT + "\n".join(summary_lines)
+        model = load_chat_model(model_name, max_retries=2)
+        resp = await model.ainvoke(prompt)
+        content = getattr(resp, "content", "")
+        if isinstance(content, list):
+            content = "".join(str(x) for x in content)
+        return (content or "").strip() or "请保证每日饮水充足，并循序渐进切换饮食。"
+    except Exception as exc:
+        logger.warning("ai_suggestions 生成失败，使用兜底文案: %s", exc)
+        return "请保证每日饮水充足，循序渐进切换饮食，留意过敏与消化反应。"
+
 
 async def gather_and_structure(state: State):
-    """从 note 中提取周计划 Markdown，逐周解析为 WeeklyDietPlan，汇总为 PetDietPlan。"""
+    """从 week_light_plans 批量拉 Ingredient 行，纯 Python 组装 PetDietPlan。"""
     ctx: ContextV2 = get_runtime().context
-    notes: dict[str, Note] = state.get("note", {})
-
-    # 1. 筛选周计划笔记 (type="diet_plan_for_week")
-    week_notes = {
-        k: v for k, v in notes.items()
-        if hasattr(v, 'type') and v.type == "diet_plan_for_week"
-    }
+    light_plans: list[WeekLightPlan] = list(state.get("week_light_plans") or [])
 
     emit_progress(
-        ProgressEventType.STRUCTURING,
-        f"正在结构化 {len(week_notes)} 个周计划",
+        ProgressEventType.GATHERING,
+        f"汇总 {len(light_plans)} 个轻量周计划，开始批量查询食材数据",
         node="gather_and_structure",
         progress=80,
     )
 
-    if not week_notes:
-        # 如果没有周计划笔记，返回空报告
+    if not light_plans:
+        logger.warning("gather_and_structure: 未收到任何 week_light_plans")
         return {
             "report": PetDietPlan(
                 pet_information=ctx.pet_information,
                 pet_diet_plan=MonthlyDietPlan(monthly_diet_plan=[]),
-                ai_suggestions="未能生成周计划，请重新尝试。",
+                ai_suggestions="未能生成周计划，请重试。",
             ),
+            "weekly_diet_plans": [],
         }
 
-    # 2. 逐周解析为 WeeklyDietPlan（并行执行）
-    async def _structure_one(note_name: str, note: Note) -> WeeklyDietPlan:
-        structure_agent = create_agent(
-            model=load_chat_model(ctx.report_model),
-            response_format=WeeklyDietPlan,
-            middleware=[structure_report_prompt],
-        )
-        response = await structure_agent.ainvoke(
-            input={"messages": [HumanMessage(content=note.content)]}
-        )
-        return response["structured_response"]
+    # 1) 一次性批量查询所有用到的食材
+    names = collect_ingredient_names(light_plans)
+    rows_by_name = await fetch_ingredients_by_names(names)
+    logger.info(
+        "gather_and_structure: 食材批量查询完成，命中 %s/%s",
+        len(rows_by_name), len(names),
+    )
 
-    tasks = [
-        _structure_one(name, note)
-        for name, note in sorted(week_notes.items())
+    emit_progress(
+        ProgressEventType.STRUCTURING,
+        f"组装 4 周 WeeklyDietPlan（命中食材 {len(rows_by_name)}/{len(names)}）",
+        node="gather_and_structure",
+        progress=88,
+    )
+
+    # 2) 并行组装每一周（纯 CPU，to_thread 不必要；直接在事件循环中同步调用即可）
+    weekly_plans: list[WeeklyDietPlan] = [
+        assemble_weekly_plan(light=lp, rows_by_name=rows_by_name)
+        for lp in sorted(light_plans, key=lambda p: p.week_number)
     ]
-    weekly_plans = await asyncio.gather(*tasks)
+
+    # 3) 可选 1 次 LLM 生成 ai_suggestions
+    ai_suggestions = await _generate_ai_suggestions(weekly_plans, ctx.summary_model)
 
     emit_progress(
         ProgressEventType.STRUCTURED,
-        f"已完成 {len(weekly_plans)} 个周计划的结构化",
+        "周计划结构化完成",
         node="gather_and_structure",
         progress=95,
     )
 
-    # 3. 汇总为 PetDietPlan
     report = PetDietPlan(
         pet_information=ctx.pet_information,
-        pet_diet_plan=MonthlyDietPlan(
-            monthly_diet_plan=list(weekly_plans),
-        ),
-        ai_suggestions="基于宠物个体信息和专业调研生成的个性化月度营养饮食计划。",
+        pet_diet_plan=MonthlyDietPlan(monthly_diet_plan=weekly_plans),
+        ai_suggestions=ai_suggestions,
     )
 
     emit_progress(
@@ -222,6 +299,6 @@ async def gather_and_structure(state: State):
     )
 
     return {
-        "weekly_diet_plans": list(weekly_plans),
+        "weekly_diet_plans": weekly_plans,
         "report": report,
     }

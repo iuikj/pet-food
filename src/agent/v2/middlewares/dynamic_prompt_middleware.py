@@ -104,7 +104,8 @@ async def coordination_agent_prompt(
     )
     return await handler(
         request.override(
-            system_message=append_to_system_message(request.system_message, new_content)
+            system_message=append_to_system_message(request.system_message, new_content),
+
         )
     )
 
@@ -118,7 +119,8 @@ async def structure_report_prompt(
     new_content = ctx.structure_report_prompt
     return await handler(
         request.override(
-            system_message=append_to_system_message(request.system_message, new_content)
+            system_message=append_to_system_message(request.system_message, new_content),
+
         )
     )
 
