@@ -1,7 +1,6 @@
 from typing import Annotated
 
 from langchain_core.tools import tool
-from langchain_tavily.tavily_search import TavilySearch
 
 
 @tool
@@ -45,6 +44,10 @@ def get_weather(city: str):
 
 async def tavily_search(query: Annotated[str, "要搜索的内容"]):
     """互联网搜索工具，用于获取最新的网络信息和资料。注意：为控制上下文长度和降低调用成本，每个任务执行过程中仅可调用一次此工具。"""
+    # 延迟导入：只在首次实际搜索时引入 langchain_tavily，避免 agent 模块
+    # import 期就拉入该重量级依赖。
+    from langchain_tavily.tavily_search import TavilySearch
+
     search = TavilySearch(
         max_results=3,
     )

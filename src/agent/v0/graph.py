@@ -1,4 +1,3 @@
-from dotenv import load_dotenv
 from langgraph.graph.state import StateGraph
 
 from src.agent.common.structrue_agent.graph import build_structure_agent
@@ -8,10 +7,13 @@ from src.agent.v0.node import call_model, tool_node, gather
 from src.agent.v0.state import State, StateInput, StateOutput
 from src.agent.v0.utils.context import Context
 
-load_dotenv(dotenv_path=".env", override=True)
-
 
 async def build_graph_with_langgraph_studio():
+    from src.models_registry import ensure_dotenv_loaded, ensure_providers_registered
+
+    ensure_dotenv_loaded()
+    ensure_providers_registered()
+
     graph = StateGraph(State, input_schema=StateInput,output_schema=StateOutput, context_schema=Context)
     graph.add_node("call_model", call_model)
     graph.add_node("tools", tool_node)

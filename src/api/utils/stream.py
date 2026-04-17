@@ -9,9 +9,12 @@
 import json
 import asyncio
 import logging
-from typing import AsyncGenerator, Dict, Any
+from typing import AsyncGenerator, Dict, Any, TYPE_CHECKING
 from datetime import datetime, timezone
-from langgraph.graph.state import CompiledStateGraph
+
+if TYPE_CHECKING:
+    # 仅作类型标注，推迟 langgraph 导入直至图真正执行。
+    from langgraph.graph.state import CompiledStateGraph
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +79,7 @@ async def stream_with_heartbeat(
 
 
 async def stream_langgraph_execution(
-    graph: CompiledStateGraph,
+    graph: "CompiledStateGraph",
     inputs: Dict[str, Any],
     config: Dict[str, Any],
     completed_data: Dict[str, Any] | None = None,

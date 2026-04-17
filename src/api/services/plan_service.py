@@ -5,14 +5,13 @@
 import json
 import asyncio
 import logging
-from typing import Dict, Any, AsyncGenerator
+from typing import Dict, Any, AsyncGenerator, TYPE_CHECKING
 from datetime import datetime, timezone, date
 import uuid
 
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from langgraph.graph.state import CompiledStateGraph
 
 from src.db.session import AsyncSessionLocal
 from src.api.services.task_service import TaskService
@@ -25,9 +24,11 @@ from src.api.models.response import (
     PetType as ResponsePetType,
 )
 from src.api.utils.stream import stream_langgraph_execution, create_sse_event, stream_with_heartbeat
-from src.agent.v1.graph import build_v1_graph
-from src.agent.v1.utils.context import ContextV1
 from src.utils.strtuct import PetInformation
+
+if TYPE_CHECKING:
+    # 仅用于类型标注，避免启动期引入 langgraph / langchain 重栈。
+    from langgraph.graph.state import CompiledStateGraph
 
 logger = logging.getLogger(__name__)
 
@@ -460,8 +461,12 @@ class PlanService:
     # ──────────── 内部方法 ────────────
 
     @staticmethod
-    async def _build_graph() -> CompiledStateGraph:
+    async def _build_graph() -> "CompiledStateGraph":
         """构建 V1 LangGraph 图"""
+        # 延迟导入：只有真正触发计划生成时才加载 agent/v1 + langgraph 栈，
+        # 避免冷启动成本分摊到不调用 LLM 的路径（登录、宠物 CRUD 等）。
+        from src.agent.v1.graph import build_v1_graph
+
         return await build_v1_graph()
 
     @staticmethod
@@ -475,6 +480,8 @@ class PlanService:
         Returns:
             (inputs, context) 元组
         """
+        from src.agent.v1.utils.context import ContextV1
+
         pet_info_filtered = {
             k: v for k, v in pet_info.items()
             if k in PetInformation.model_fields

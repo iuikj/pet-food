@@ -5,7 +5,6 @@ V1 LangGraph 构建入口。
 """
 import asyncio
 
-from dotenv import load_dotenv
 from langgraph.graph.state import StateGraph
 
 from src.agent.common.structrue_agent.graph import build_structure_agent
@@ -22,8 +21,6 @@ from src.agent.v1.state import StateV1, StateV1Input, StateV1Output
 from src.agent.v1.utils.context import ContextV1
 from src.agent.v1.week_agent.graph import build_week_agent
 
-load_dotenv(dotenv_path=".env", override=True)
-
 
 _compiled_v1_graph = None
 _compiled_v1_graph_lock = asyncio.Lock()
@@ -32,6 +29,11 @@ _compiled_v1_graph_lock = asyncio.Lock()
 async def build_v1_graph(force_rebuild: bool = False):
     """构建并缓存编译后的 V1 图，供后续请求复用。"""
     global _compiled_v1_graph
+
+    from src.models_registry import ensure_dotenv_loaded, ensure_providers_registered
+
+    ensure_dotenv_loaded()
+    ensure_providers_registered()
 
     # 常规请求直接复用编译结果，减少冷启动开销。
     if _compiled_v1_graph is not None and not force_rebuild:

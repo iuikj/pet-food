@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 
 from deepagents import create_deep_agent
-from deepagents.backends import FilesystemBackend, CompositeBackend, StateBackend
+from deepagents.backends import FilesystemBackend, CompositeBackend, StateBackend, StoreBackend
 from langchain.agents import create_agent
 from langchain.agents.middleware import after_agent
 from langchain.messages import HumanMessage
@@ -41,6 +41,7 @@ from src.agent.v2.middlewares.trigger_middleware import (
     trigger_plan_agent,
     trigger_week_agent,
 )
+from src.agent.v2.middlewares.response_format_middleware import collect_week_light_plan
 from src.agent.v2.models import WeekLightPlan
 from src.agent.v2.state import State, WeekAgentState
 from src.agent.v2.sub_agents.web_search_agent import websearch_sub_agent
@@ -55,6 +56,15 @@ from src.agent.v2.utils.assemble import (
 from src.agent.v2.utils.context import ContextV2
 
 logger = logging.getLogger(__name__)
+
+
+# v2 在模块顶层即调用 load_chat_model 构造 plan_agent_with_sub / week_agent，
+# 因此必须在第一次 load_chat_model 之前完成厂商注册。
+# 通过独立模块的幂等函数执行一次即可。
+from src.models_registry import ensure_dotenv_loaded, ensure_providers_registered
+
+ensure_dotenv_loaded()
+ensure_providers_registered()
 
 
 # ──────────────────────────── 路径常量（可移植） ────────────────────────────
@@ -78,6 +88,12 @@ def _make_backend() -> CompositeBackend:
                 virtual_mode=True,
             ),
             "/temp_notes/": StateBackend(),
+            # "/memories/": StoreBackend(
+            #     namespace=lambda rt: (rt.server_info.user.identity,),
+            # ),
+            # "/memories2/": StoreBackend(
+            #     namespace=lambda rt: (rt.serve),
+            # ),
         },
     )
 
@@ -163,21 +179,6 @@ async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
 
 # ──────────────────────────── Phase 2: week_agent ────────────────────────────
 
-@after_agent
-def collect_week_light_plan(state: Any, runtime: Runtime) -> dict | None:
-    """把 week_agent 的 structured_response 归集到父图的 week_light_plans。
-
-    父 State 的 `week_light_plans` 用 operator.add 合并，4 个并行 week_agent
-    各返回一个长度 1 的列表即可正确汇总为 4 条。
-    """
-    sr = None
-    if isinstance(state, dict):
-        sr = state.get("structured_response")
-    else:
-        sr = getattr(state, "structured_response", None)
-    if isinstance(sr, WeekLightPlan):
-        return {"week_light_plans": [sr]}
-    return None
 
 
 week_agent = create_deep_agent(
