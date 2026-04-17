@@ -131,7 +131,7 @@ WEEK_PLANNER_PROMPT = PET_INFO_UNIT_NOTE + """
 **直接调用 week-diet-planner 这个 skill**，严格按照 skill 中定义的 7 步流程执行。
 
 ## 最终输出
-- 你已被配置 `response_format=WeekLightPlan`；思考/工具调用完成后，最后一条消息**直接输出符合 WeekLightPlan 的结构化 JSON**。
+- 你已被配置 `response_format=WeekLightPlan`；思考/工具调用完成后，最后一条消息**直接输出符合 WeekLightPlan 的结构化输出**。
 - `ingredient_name` 必须与 `ingredient_detail_tool` / `ingredient_search_tool` 返回的名称**完全一致**。
 - **不要**在输出里写每克食材的微量营养素数值；Phase 3 会从数据库按 per-100g × 克数自动计算。
 - **不要**输出 Markdown 报告，不要调用已废弃的 `write_week_plan` 工具。
