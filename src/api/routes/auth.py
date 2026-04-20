@@ -42,7 +42,7 @@ async def get_user_avatar_object(
     storage: MinioManager = Depends(get_minio_storage),
 ):
     """通过后端统一主机地址代理 MinIO 中的用户头像。"""
-    file_content = storage.download_file(object_name)
+    file_content = await storage.adownload_file(object_name)
     if file_content is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -53,7 +53,7 @@ async def get_user_avatar_object(
             }
         )
 
-    file_info = storage.get_file_info(object_name) or {}
+    file_info = await storage.aget_file_info(object_name) or {}
     media_type = (
         file_info.get("content_type")
         or mimetypes.guess_type(object_name)[0]
@@ -389,7 +389,7 @@ async def upload_avatar(
 
         # 上传至 MinIO
         uploaded_object_name = f"avatars/users/{current_user.id}/{uuid4().hex}{file_ext}"
-        upload_success = storage.upload_file(
+        upload_success = await storage.aupload_file(
             object_name=uploaded_object_name,
             file_data=content,
             content_type=file.content_type,
@@ -414,7 +414,7 @@ async def upload_avatar(
         # 清理旧头像
         old_object_name = storage.extract_object_name(old_avatar_reference)
         if old_object_name and old_object_name != uploaded_object_name:
-            storage.delete_file(old_object_name)
+            await storage.adelete_file(old_object_name)
 
         # 解析为可访问 URL
         avatar_url = _resolve_user_avatar_url(current_user.avatar_url, storage, request=http_request)
@@ -436,11 +436,11 @@ async def upload_avatar(
 
     except HTTPException:
         if uploaded_object_name:
-            storage.delete_file(uploaded_object_name)
+            await storage.adelete_file(uploaded_object_name)
         raise
     except Exception as e:
         if uploaded_object_name:
-            storage.delete_file(uploaded_object_name)
+            await storage.adelete_file(uploaded_object_name)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={

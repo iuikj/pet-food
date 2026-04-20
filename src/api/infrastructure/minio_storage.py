@@ -1,6 +1,7 @@
 """
 MinIO 文件存储封装
 """
+import asyncio
 import io
 import logging
 from datetime import timedelta
@@ -318,6 +319,60 @@ class MinioManager:
             return file_reference
 
         return self.get_file_url(object_name, request_host=request_host) or file_reference
+
+    # ──────────── 异步包装：将阻塞 I/O 卸载到线程池 ────────────
+    #
+    # 以下 a-前缀 方法用于 async 路径（FastAPI 路由/Service）。
+    # 仅包装涉及真实网络 I/O 的操作；预签名 URL 生成（get_file_url
+    # / get_upload_url）是纯本地签名计算，无需异步化。
+    #
+    # 命名参考 LangChain/SQLAlchemy 约定（ainvoke、aexecute）。
+
+    async def aupload_file(
+        self,
+        object_name: str,
+        file_data: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> bool:
+        """异步上传（to_thread 卸载 put_object）。"""
+        return await asyncio.to_thread(
+            self.upload_file, object_name, file_data, content_type
+        )
+
+    async def aupload_file_from_path(
+        self,
+        object_name: str,
+        file_path: str,
+        content_type: str | None = None,
+    ) -> bool:
+        """异步从路径上传。"""
+        return await asyncio.to_thread(
+            self.upload_file_from_path, object_name, file_path, content_type
+        )
+
+    async def adownload_file(self, object_name: str) -> Optional[bytes]:
+        """异步下载（to_thread 卸载 get_object）。"""
+        return await asyncio.to_thread(self.download_file, object_name)
+
+    async def adownload_file_to_path(self, object_name: str, file_path: str) -> bool:
+        """异步下载到路径。"""
+        return await asyncio.to_thread(self.download_file_to_path, object_name, file_path)
+
+    async def adelete_file(self, object_name: str) -> bool:
+        """异步删除（to_thread 卸载 remove_object）。"""
+        return await asyncio.to_thread(self.delete_file, object_name)
+
+    async def alist_files(self, prefix: str = "") -> list[str]:
+        """异步列出（to_thread 卸载 list_objects）。"""
+        return await asyncio.to_thread(self.list_files, prefix)
+
+    async def aget_file_info(self, object_name: str) -> Optional[dict]:
+        """异步获取文件信息（to_thread 卸载 stat_object）。"""
+        return await asyncio.to_thread(self.get_file_info, object_name)
+
+    async def afile_exists(self, object_name: str) -> bool:
+        """异步存在性检查（to_thread 卸载 stat_object）。"""
+        return await asyncio.to_thread(self.file_exists, object_name)
 
 
 def get_minio_client() -> MinioManager:

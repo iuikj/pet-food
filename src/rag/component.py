@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from typing import Any, List, Sequence
 
 logger = logging.getLogger(__name__)
@@ -142,6 +143,10 @@ class DashscopeReranker(BaseDocumentCompressor):
     ) -> List[Document]:
         """
         对输入文档进行重排序，保留 top_n。
+
+        注意：此方法是**同步阻塞**的（含 time.sleep 重试、同步 HTTP 调用），
+        **禁止在 async 路径直接调用**，否则会阻塞事件循环。
+        async 调用方请使用 `acompress_documents`。
         """
         if not documents:
             return []
@@ -163,3 +168,17 @@ class DashscopeReranker(BaseDocumentCompressor):
         )
 
         return sorted_docs[: self.top_n]
+
+    async def acompress_documents(
+        self, documents: List[Document], query: str, callbacks: Optional[Any] = None
+    ) -> List[Document]:
+        """
+        异步版本：将同步 HTTP 调用 + time.sleep 重试卸载到默认线程池，
+        避免在 async 路径（如 LangChain ainvoke）阻塞事件循环。
+
+        LangChain `BaseDocumentCompressor.acompress_documents` 的默认实现
+        行为等价，但显式覆盖可让意图更清晰，也便于后续切换为真正的异步 SDK。
+        """
+        return await asyncio.to_thread(
+            self.compress_documents, documents, query, callbacks
+        )

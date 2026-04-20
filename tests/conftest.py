@@ -115,7 +115,7 @@ async def test_user(test_session: AsyncSession):
         id=user_id,
         username=f"testuser_{user_id[:8]}",
         email=f"test_{user_id[:8]}@example.com",
-        hashed_password=hash_password("testpass123"),
+        hashed_password=await hash_password("testpass123"),
         is_active=True,
         is_superuser=False,
     )
@@ -142,7 +142,7 @@ async def second_user(test_session: AsyncSession):
         id=user_id,
         username=f"otheruser_{user_id[:8]}",
         email=f"other_{user_id[:8]}@example.com",
-        hashed_password=hash_password("otherpass123"),
+        hashed_password=await hash_password("otherpass123"),
         is_active=True,
         is_superuser=False,
     )

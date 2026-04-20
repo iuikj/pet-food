@@ -2,6 +2,7 @@
 安全工具
 包含密码哈希、JWT Token 生成和验证等功能
 """
+import asyncio
 import bcrypt
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
@@ -9,12 +10,37 @@ from jose import JWTError, jwt
 
 from src.api.config import settings
 
+# bcrypt 限制：密码最长 72 字节
+_BCRYPT_MAX_PASSWORD_BYTES = 72
 
-def hash_password(password: str) -> str:
+
+def _hash_password_sync(password: str) -> str:
+    """bcrypt 哈希的同步实现（内部使用，勿在 async 路径直接调用）。"""
+    if len(password) > _BCRYPT_MAX_PASSWORD_BYTES:
+        password = password[:_BCRYPT_MAX_PASSWORD_BYTES]
+
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
+    return hashed.decode("utf-8")
+
+
+def _verify_password_sync(plain_password: str, hashed_password: str) -> bool:
+    """bcrypt 校验的同步实现（内部使用，勿在 async 路径直接调用）。"""
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8"),
+        )
+    except Exception:
+        return False
+
+
+async def hash_password(password: str) -> str:
     """
-    对密码进行哈希
-    直接使用 bcrypt 库，避免 passlib 版本兼容问题
-    自动截断密码到 72 字节（bcrypt 限制）
+    对密码进行哈希（异步版本）。
+
+    bcrypt 是 CPU 密集型操作（默认 12 轮约 200-300ms），
+    通过 asyncio.to_thread 卸载到默认线程池，避免阻塞事件循环。
 
     Args:
         password: 明文密码
@@ -22,24 +48,14 @@ def hash_password(password: str) -> str:
     Returns:
         哈希后的密码
     """
-    # bcrypt 的限制是 72 字节
-    max_password_length = 72
-    if len(password) > max_password_length:
-        password = password[:max_password_length]
-
-    # 将密码转换为 bytes
-    password_bytes = password.encode('utf-8')
-
-    # 生成 salt 并哈希密码
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password_bytes, salt)
-
-    return hashed.decode('utf-8')
+    return await asyncio.to_thread(_hash_password_sync, password)
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
+async def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
-    验证密码
+    验证密码（异步版本）。
+
+    通过 asyncio.to_thread 卸载 bcrypt 校验到线程池，避免阻塞事件循环。
 
     Args:
         plain_password: 明文密码
@@ -48,14 +64,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Returns:
         是否匹配
     """
-    try:
-        # 将字符串转换为 bytes
-        plain_bytes = plain_password.encode('utf-8')
-        hashed_bytes = hashed_password.encode('utf-8')
-
-        return bcrypt.checkpw(plain_bytes, hashed_bytes)
-    except Exception:
-        return False
+    return await asyncio.to_thread(_verify_password_sync, plain_password, hashed_password)
 
 
 def create_access_token(

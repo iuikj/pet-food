@@ -83,7 +83,7 @@ class AuthService:
             id=self._generate_uuid(),
             username=username,
             email=email,
-            hashed_password=hash_password(password),
+            hashed_password=await hash_password(password),
             is_active=True,
             is_superuser=False
         )
@@ -134,7 +134,7 @@ class AuthService:
             raise NotFoundException("用户不存在")
 
         # 验证密码
-        if not verify_password(password, user.hashed_password):
+        if not await verify_password(password, user.hashed_password):
             raise AuthException("用户名或密码错误")
 
         # 检查用户是否激活
@@ -349,7 +349,7 @@ class AuthService:
             raise NotFoundException("用户不存在")
 
         # 更新密码
-        user.hashed_password = hash_password(new_password)
+        user.hashed_password = await hash_password(new_password)
         await self.db.commit()
         await self.db.refresh(user)
 
@@ -381,10 +381,10 @@ class AuthService:
             raise NotFoundException("用户不存在")
 
         # 验证旧密码
-        if not verify_password(old_password, user.hashed_password):
+        if not await verify_password(old_password, user.hashed_password):
             raise ValidationException("旧密码错误")
 
         # 更新密码
-        user.hashed_password = hash_password(new_password)
+        user.hashed_password = await hash_password(new_password)
         await self.db.commit()
         await self.db.refresh(user)

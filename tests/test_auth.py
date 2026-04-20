@@ -174,15 +174,15 @@ class TestAuthValidators:
         from src.api.utils.security import hash_password, verify_password
 
         password = "testpassword"
-        hashed = hash_password(password)
+        hashed = await hash_password(password)
 
         assert hashed != password
         assert isinstance(hashed, str)
         assert len(hashed) > 50
 
         # 验证密码
-        assert verify_password(password, hashed)
-        assert not verify_password("wrongpassword", hashed)
+        assert await verify_password(password, hashed)
+        assert not await verify_password("wrongpassword", hashed)
 
     async def test_token_generation(self):
         """测试 Token 生成"""

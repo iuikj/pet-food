@@ -36,7 +36,7 @@ async def get_pet_avatar_object(
     storage: MinioManager = Depends(get_minio_storage),
 ):
     """通过后端统一主机地址代理 MinIO 中的宠物头像。"""
-    file_content = storage.download_file(object_name)
+    file_content = await storage.adownload_file(object_name)
     if file_content is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -47,7 +47,7 @@ async def get_pet_avatar_object(
             }
         )
 
-    file_info = storage.get_file_info(object_name) or {}
+    file_info = await storage.aget_file_info(object_name) or {}
     media_type = (
         file_info.get("content_type")
         or mimetypes.guess_type(object_name)[0]
@@ -462,7 +462,7 @@ async def upload_pet_avatar(
             file_ext = content_type_to_ext[file.content_type]
 
         uploaded_object_name = f"avatars/pets/{pet_id}/{uuid4().hex}{file_ext}"
-        upload_success = storage.upload_file(
+        upload_success = await storage.aupload_file(
             object_name=uploaded_object_name,
             file_data=content,
             content_type=file.content_type,
@@ -481,7 +481,7 @@ async def upload_pet_avatar(
         avatar_reference = storage.build_object_reference(uploaded_object_name)
         pet = await pet_service.update_avatar(current_user_id, pet_id, avatar_reference)
         if not pet:
-            storage.delete_file(uploaded_object_name)
+            await storage.adelete_file(uploaded_object_name)
             uploaded_object_name = None
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -494,7 +494,7 @@ async def upload_pet_avatar(
 
         old_object_name = storage.extract_object_name(old_avatar_reference)
         if old_object_name and old_object_name != uploaded_object_name:
-            storage.delete_file(old_object_name)
+            await storage.adelete_file(old_object_name)
 
         avatar_url = _resolve_avatar_url(pet.avatar_url, storage, request=http_request)
         if not avatar_url:
@@ -514,11 +514,11 @@ async def upload_pet_avatar(
         )
     except HTTPException:
         if uploaded_object_name:
-            storage.delete_file(uploaded_object_name)
+            await storage.adelete_file(uploaded_object_name)
         raise
     except Exception as e:
         if uploaded_object_name:
-            storage.delete_file(uploaded_object_name)
+            await storage.adelete_file(uploaded_object_name)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
