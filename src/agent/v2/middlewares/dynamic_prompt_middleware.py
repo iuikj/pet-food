@@ -138,14 +138,14 @@ async def week_agent_prompt(
     week_num = assignment.week_number
     info = ctx.pet_information
 
-    # # 构建调研笔记内容（来自 dispatch_weeks 分配的 research_note_contents）
-    # research_notes: dict[str, str] = state.get("research_note_contents") or {}
-    # if research_notes:
-    #     research_notes_text = "\n\n".join(
-    #         f"### {name}\n{content}" for name, content in research_notes.items()
-    #     )
-    # else:
-    #     research_notes_text = "（暂无调研笔记）"
+    # 构建调研笔记内容（来自 dispatch_weeks 分配的 research_note_contents）
+    research_notes: dict[str, str] = state.get("research_note_contents") or {}
+    if research_notes:
+        research_notes_text = "\n\n".join(
+            f"#### {name}\n{content}" for name, content in research_notes.items()
+        )
+    else:
+        research_notes_text = "（暂无调研笔记）"
 
     new_content = ctx.week_planner_prompt.format(
         week_number=week_num,
@@ -160,7 +160,7 @@ async def week_agent_prompt(
         ),
         ingredient_rotation_strategy=state.get("ingredient_rotation_strategy", ""),
         age_adaptation_note=state.get("age_adaptation_note", ""),
-        research_notes=assignment.relevant_research_notes,
+        research_notes=research_notes_text,
     )
     return await handler(
         request.override(

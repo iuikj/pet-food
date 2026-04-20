@@ -14,6 +14,7 @@ from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend, CompositeBackend, StateBackend, StoreBackend
 from langchain.agents import create_agent
 from langchain.agents.middleware import after_agent
+from langchain.agents.structured_output import ToolStrategy
 from langchain.messages import HumanMessage
 from langchain_dev_utils.chat_models import load_chat_model
 from langgraph.runtime import Runtime, get_runtime

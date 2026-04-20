@@ -23,11 +23,11 @@ class ContextV2:
     pet_information: Annotated[PetInformation, "宠物信息"] = None
     # ── 模型配置 ──
     plan_model: Annotated[str, "研究规划器模型"] = "dashscope:qwen3.5-plus"
-    sub_model: Annotated[str, "子智能体模型"] = "dashscope:qwen3.5-plus"
+    sub_model: Annotated[str, "子智能体模型"] = "dashscope:qwen3.6-plus"
     write_model: Annotated[str, "笔记写入模型"] = "dashscope:qwen-flash"
     summary_model: Annotated[str, "摘要模型"] = "dashscope:qwen-flash"
     report_model: Annotated[str, "结构化报告模型"] = "dashscope:qwen3.5-plus"
-    week_model: Annotated[str, "周规划器模型"] = "dashscope:qwen3.5-plus"
+    week_model: Annotated[str, "周规划器模型"] = "dashscope:qwen3.6-plus"
 
     # ── 提示词配置 ──
     # Phase 1: 研究阶段
