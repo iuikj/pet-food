@@ -27,6 +27,7 @@ class ContextV2:
     write_model: Annotated[str, "笔记写入模型"] = "dashscope:qwen-flash"
     summary_model: Annotated[str, "摘要模型"] = "dashscope:qwen-flash"
     report_model: Annotated[str, "结构化报告模型"] = "dashscope:qwen3.5-plus"
+    # week_model: Annotated[str, "周规划器模型"] = "moonshot:kimi-k2.6"
     week_model: Annotated[str, "周规划器模型"] = "dashscope:qwen3.6-plus"
 
     # ── 提示词配置 ──

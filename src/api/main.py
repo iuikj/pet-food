@@ -143,7 +143,7 @@ async def health_check_detail():
     }
 
 
-from src.api.routes import analysis, auth, calendar, meals, pets, plans, tasks, todos, verification, weights
+from src.api.routes import analysis, auth, calendar, ingredients, meals, pets, plans, tasks, todos, verification, weights
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(verification.router, prefix="/api/v1/auth", tags=["verification"])
@@ -155,6 +155,7 @@ app.include_router(weights.router, prefix="/api/v1/weights", tags=["weights"])
 app.include_router(plans.router, prefix="/api/v1/plans", tags=["plans"])
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["tasks"])
 app.include_router(todos.router, prefix="/api/v1/todos", tags=["todos"])
+app.include_router(ingredients.router, prefix="/api/v1/ingredients", tags=["ingredients"])
 
 
 if __name__ == "__main__":

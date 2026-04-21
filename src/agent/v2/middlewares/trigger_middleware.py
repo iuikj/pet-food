@@ -27,7 +27,7 @@ def trigger_week_agent(state: AgentState, runtime: Runtime):
     :return:
     """
     return {
-        "messages": [HumanMessage(content="/research-memory 使用skill")]
+        "messages": [HumanMessage(content="/week-diet-planner 使用skill")]
     }
 
 
@@ -40,5 +40,5 @@ def trigger_sub_agent(state: AgentState, runtime: Runtime):
     :return:
     """
     return {
-        "messages": [HumanMessage(content="/week-diet-planner 使用skill")]
+        "messages": [HumanMessage(content="/research-memory 使用skill")]
     }

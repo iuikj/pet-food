@@ -259,11 +259,19 @@ class Ingredient(Base):
     __tablename__ = "ingredients"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False, comment="食材名称")
+    name: Mapped[str] = mapped_column(String(100), index=True, nullable=False, comment="食材名称")
     category: Mapped[str] = mapped_column(String(50), nullable=False, comment="大类别")
     sub_category: Mapped[str] = mapped_column(String(50), nullable=False, comment="小类别")
     has_nutrition_data: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否有营养数据")
     note: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, comment="计量备注")
+
+    # 归属 - 区分系统食材与用户自定义食材
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True, comment="用户 ID（系统食材为 NULL）"
+    )
+    is_system: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, index=True, comment="是否系统食材（全局只读）"
+    )
 
     # 宏量营养素
     calories: Mapped[Optional[float]] = mapped_column(Numeric(10, 4), nullable=True, comment="热量 (kcal)")
@@ -314,6 +322,8 @@ class Ingredient(Base):
     # 索引
     __table_args__ = (
         Index("idx_ingredient_category", "category", "sub_category"),
+        Index("idx_ingredient_owner", "user_id", "is_system"),
+        UniqueConstraint("user_id", "name", name="uq_ingredient_user_name"),
     )
 
 

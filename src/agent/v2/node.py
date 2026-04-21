@@ -29,6 +29,7 @@ from src.agent.common.utils.struct import (
     WeeklyDietPlan,
 )
 from src.agent.v1.models import CoordinationGuide
+from src.agent.v2.middlewares.ban_subagent_middleware import ban_sub_agent
 from src.agent.v2.middlewares.dynamic_prompt_middleware import (
     plan_agent_prompt,
     coordination_agent_prompt,
@@ -55,6 +56,9 @@ from src.agent.v2.utils.assemble import (
     fetch_ingredients_by_names,
 )
 from src.agent.v2.utils.context import ContextV2
+from langchain.agents import create_agent
+from deepagents.middleware.filesystem import FilesystemMiddleware
+from deepagents.middleware.skills import SkillsMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +93,6 @@ def _make_backend() -> CompositeBackend:
                 virtual_mode=True,
             ),
             "/temp_notes/": StateBackend(),
-            # "/memories/": StoreBackend(
-            #     namespace=lambda rt: (rt.server_info.user.identity,),
-            # ),
-            # "/memories2/": StoreBackend(
-            #     namespace=lambda rt: (rt.serve),
-            # ),
         },
     )
 
@@ -181,23 +179,47 @@ async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
 # ──────────────────────────── Phase 2: week_agent ────────────────────────────
 
 
-
-week_agent = create_deep_agent(
+# week_agent = create_deep_agent(
+#     name="week_agent",
+#     model=load_chat_model(
+#         ContextV2.week_model,
+#         extra_body={
+#             "thinking": {"type": "disabled"}
+#         }),
+#     tools=WEEK_AGENT_TOOLS,
+#     backend=_make_backend(),
+#     skills=["/skills/"],
+#     middleware=[
+#         week_agent_prompt,
+#         trigger_week_agent,
+#         week_progress_middleware,
+#         collect_week_light_plan,
+#         ban_sub_agent
+#     ],
+#     subagents=[],
+#     context_schema=ContextV2,
+#     response_format=ToolStrategy(WeekLightPlan),
+# )
+week_agent = create_agent(
     name="week_agent",
-    model=load_chat_model(ContextV2.week_model),
+    model=load_chat_model(
+        ContextV2.week_model,
+        extra_body={
+            "thinking": {"type": "disabled"}
+        }),
     tools=WEEK_AGENT_TOOLS,
-    backend=_make_backend(),
-    skills=["/skills/"],
     middleware=[
+        FilesystemMiddleware(backend=_make_backend()),
+        SkillsMiddleware(backend=_make_backend(),sources=["/skills/"]),
         week_agent_prompt,
         trigger_week_agent,
         week_progress_middleware,
         collect_week_light_plan,
+        ban_sub_agent
     ],
     context_schema=ContextV2,
-    response_format=WeekLightPlan,
+    response_format=ToolStrategy(WeekLightPlan),
 )
-
 
 # ──────────────────────────── Phase 3: 纯 Python 组装 + 可选 ai_suggestions ────────────────────────────
 

@@ -26,7 +26,9 @@ async def structure_report(state: StructState, config: RunnableConfig) -> Comman
         }
     )
 
-    if state["temp_note"].type == "diet_plan":
+    # 兼容 v0 (`diet_plan`) 与 v1 (`diet_plan_for_week`)：
+    # 两种类型都对应"单周饮食计划"笔记，需要解析为 WeeklyDietPlan
+    if state["temp_note"].type in ("diet_plan", "diet_plan_for_week"):
         structure_model = model.with_structured_output(WeeklyDietPlan, include_raw=True)
         if state.get("weekly_diet_plans"):
             return Command(

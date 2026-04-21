@@ -14,7 +14,6 @@ websearch_sub_agent=SubAgent(
     这是一个网络搜索子agent，用于搜索网络信息。
     """,
     middleware=[
-        NoteMiddleware(),
         sub_agent_prompt
     ]
 )

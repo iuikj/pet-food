@@ -1884,7 +1884,7 @@ wheels = [
 
 [[package]]
 name = "langgraph-cli"
-version = "0.4.22"
+version = "0.4.23"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1893,9 +1893,9 @@ dependencies = [
     { name = "pathspec" },
     { name = "python-dotenv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/b6/d3de115f4529bf42e4f4c4888093621a3c835bdc4e35a7c42ac9bf15c699/langgraph_cli-0.4.22.tar.gz", hash = "sha256:f25720795f39e97e0c553cf21ae6312772faf2d3eab909d146de163367fe3d33", size = 1018739, upload-time = "2026-04-16T18:43:42.898Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/f0/f987c13cf35214bbe1a6f6f911b3e61afaa071b7bb3d7b2a94ffd2cff921/langgraph_cli-0.4.23.tar.gz", hash = "sha256:620d2fe7506580d57e90384ae42495af7f6092e8f7c6c11f8e010a8e57177075", size = 1024326, upload-time = "2026-04-17T17:03:54.004Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/84/7e90e5f3c070ff73644ff0e73d2dfe02de4b88a05d13745ed4d23077c918/langgraph_cli-0.4.22-py3-none-any.whl", hash = "sha256:70dcad74facb2ac06fc677644ddc27ebdb0bd7e25a3a0294b33c2f279d5e448b", size = 73681, upload-time = "2026-04-16T18:43:41.858Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/cb/079bf0aaabbe49a88ee5e51196f461f2f15bfa35c743b15d8a31ff983d88/langgraph_cli-0.4.23-py3-none-any.whl", hash = "sha256:3b4357c0dfa4725628b119f4aa543298cd6fa6cd948ac3a5480b404fedb7a536", size = 73684, upload-time = "2026-04-17T17:03:52.915Z" },
 ]
 
 [package.optional-dependencies]
@@ -2656,7 +2656,7 @@ requires-dist = [
     { name = "langchain-siliconflow", specifier = ">=0.1.3" },
     { name = "langchain-tavily", specifier = ">=0.2.11" },
     { name = "langgraph", specifier = ">=1.0.10" },
-    { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4.22" },
+    { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4.23" },
     { name = "minio", specifier = "==7.2.0" },
     { name = "note" },
     { name = "psycopg2-binary", specifier = ">=2.9.0" },

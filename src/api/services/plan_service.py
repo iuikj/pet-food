@@ -17,13 +17,19 @@ from src.db.session import AsyncSessionLocal
 from src.api.services.task_service import TaskService
 from src.api.services.pet_service import PetService
 from src.api.services.meal_service import MealService
+from src.api.services.event_bus import (
+    publish_end_sentinel,
+    publish_event,
+    stream_exists,
+    subscribe_events,
+)
 from src.api.models.response import (
     DietPlanDetailResponse,
     DietPlanListResponse,
     DietPlanSummaryResponse,
     PetType as ResponsePetType,
 )
-from src.api.utils.stream import stream_langgraph_execution, create_sse_event, stream_with_heartbeat
+from src.api.utils.stream import create_sse_event, stream_with_heartbeat
 from src.utils.strtuct import PetInformation
 
 if TYPE_CHECKING:
@@ -35,6 +41,18 @@ logger = logging.getLogger(__name__)
 # 控制高频进度事件的落库频率，避免数据库被事件流打满。
 PROGRESS_DB_WRITE_INTERVAL_SECONDS = 1.0
 PROGRESS_DB_WRITE_DELTA = 5
+
+# 后台任务强引用集合：防止 asyncio.create_task 创建的任务被 GC 回收
+# 任务完成后通过 done callback 自动从集合中移除
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro) -> asyncio.Task:
+    """启动后台任务并保留强引用，避免被 GC。任务完成后自动清理。"""
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
 
 
 class PlanService:
@@ -299,14 +317,17 @@ class PlanService:
         pet_info: Dict[str, Any],
     ) -> AsyncGenerator[str, None]:
         """
-        执行饮食计划生成（流式模式）
+        执行饮食计划生成（流式模式 / SSE 与图执行解耦版）
 
-        通过 astream(stream_mode=["custom"]) 执行图，
-        使用 completed_data 截获 completed 事件中的计划数据，
-        流结束后存入 Redis 临时存储（24h TTL），用户确认后再持久化到 PostgreSQL。
+        架构：
+        1. 创建任务记录
+        2. asyncio.create_task 启动独立后台任务执行 LangGraph 图
+        3. SSE 端点订阅 Redis Streams 进度通道，把事件实时转发给客户端
 
-        注意：内部创建独立的 db session，避免长时间流式响应导致
-        依赖注入的 session 连接泄漏（GC 回收未归还连接）。
+        关键特性：
+        - 客户端断开/挂起不影响后台图执行
+        - 客户端重连可通过 GET /plans/stream?task_id=… 回放历史事件
+        - 心跳通过 stream_with_heartbeat 保活
 
         Args:
             user_id: 用户 ID
@@ -315,20 +336,54 @@ class PlanService:
         Yields:
             SSE 格式事件字符串
         """
-        # 使用独立 session：流式响应生命周期长达数分钟，
-        # 依赖注入的 session 在客户端断开时可能无法正确归还连接池。
-        async with AsyncSessionLocal() as stream_db:
-            task_service = TaskService(stream_db)
+        # 创建任务记录使用独立 session（流式响应生命周期长）
+        async with AsyncSessionLocal() as create_db:
+            task_service = TaskService(create_db)
             task = await task_service.create_task(
                 user_id=user_id,
                 task_type="diet_plan",
                 input_data=pet_info,
             )
-
-            # 提前缓存 task_id，避免 session 异常后无法访问 ORM 属性
             task_id = task.id
 
-            yield create_sse_event({"type": "task_created", "task_id": task_id})
+        yield create_sse_event({"type": "task_created", "task_id": task_id})
+
+        # 启动后台任务（独立 session、独立生命周期、强引用防 GC）
+        _spawn_background_task(self._run_plan_task_in_background(task_id, user_id, pet_info))
+
+        # SSE 流：订阅事件总线 + 心跳保活
+        # 使用 from_beginning=True 避免后台任务先于订阅 publish 时丢失早期事件
+        async def _bus_to_sse() -> AsyncGenerator[str, None]:
+            async for event in subscribe_events(task_id, from_beginning=True):
+                yield create_sse_event(event)
+            # 终止 sentinel 收到后通知客户端流结束
+            yield create_sse_event({"type": "done", "task_id": task_id})
+
+        async for chunk in stream_with_heartbeat(_bus_to_sse()):
+            yield chunk
+
+    async def _run_plan_task_in_background(
+        self,
+        task_id: str,
+        user_id: str,
+        pet_info: Dict[str, Any],
+    ) -> None:
+        """
+        独立后台任务：执行 LangGraph 图并把所有进度事件发布到 Redis Stream。
+
+        与 SSE 客户端连接完全解耦：客户端断开/挂起不影响本任务推进。
+        所有 chunk 通过 publish_event 写入事件总线，结束后 publish_end_sentinel
+        通知订阅者关流。
+
+        Args:
+            task_id: 任务 ID
+            user_id: 用户 ID
+            pet_info: 宠物信息
+        """
+        async with AsyncSessionLocal() as db:
+            task_service = TaskService(db)
+            completed_data: Dict[str, Any] = {}
+            progress_state = {"progress": -1, "node": "", "saved_at": 0.0}
 
             try:
                 graph = await self._build_graph()
@@ -343,49 +398,74 @@ class PlanService:
 
                 inputs, context = self._prepare_inputs(pet_info)
 
-                # 流式执行 —— 通过 completed_data 截获 completed 事件
-                # 使用心跳包裹器防止长时间无事件导致连接断开
-                completed_data: Dict[str, Any] = {}
-                progress_state = {
-                    "progress": -1,
-                    "node": "",
-                    "saved_at": 0.0,
-                }
-                raw_events = stream_langgraph_execution(
-                    graph, inputs, config, completed_data=completed_data, context=context
-                )
-                async for event in stream_with_heartbeat(raw_events):
-                    # 心跳注释行（以 : 开头）不含业务数据，直接转发即可
-                    if event.startswith(":"):
-                        yield event
+                async for namespace, mode, chunk in graph.astream(
+                    input=inputs,
+                    config=config,
+                    stream_mode=["custom"],
+                    context=context,
+                    subgraphs=True,
+                ):
+                    if mode != "custom":
                         continue
-                    await self._update_task_progress_from_event(
+                    if not isinstance(chunk, dict):
+                        continue
+
+                    # 截获 completed 事件用于持久化
+                    if chunk.get("type") == "completed":
+                        completed_data.update(chunk)
+
+                    # 更新数据库进度（节流）
+                    await self._update_task_progress_from_chunk(
                         task_id,
-                        event,
+                        chunk,
                         task_service=task_service,
                         progress_state=progress_state,
                     )
-                    logger.debug("SSE event: %s", event)
-                    yield event
 
-                # 流式结束后 → 存 Redis 临时存储（24h TTL）
+                    # 发布到事件总线供 SSE 端点消费
+                    await publish_event(task_id, chunk)
+
+                # 流式结束 → 持久化临时计划 → 通知订阅者
                 await task_service.complete_task(task_id, completed_data)
                 plan_id = str(uuid.uuid4())
                 await self._save_temp_plan(plan_id, user_id, task_id, pet_info, completed_data)
 
-                yield create_sse_event({"type": "task_completed", "task_id": task_id, "plan_id": plan_id})
+                await publish_event(task_id, {
+                    "type": "task_completed",
+                    "task_id": task_id,
+                    "plan_id": plan_id,
+                })
 
-            except Exception as e:
-                logger.error("流式饮食计划执行失败: %s", e, exc_info=True)
+            except asyncio.CancelledError:
+                logger.warning("后台任务被取消: task_id=%s", task_id)
                 try:
-                    await stream_db.rollback()
+                    await task_service.fail_task(task_id, "任务已取消")
+                except Exception:
+                    pass
+                await publish_event(task_id, {
+                    "type": "error",
+                    "task_id": task_id,
+                    "error": "任务已取消",
+                })
+                raise
+            except Exception as exc:
+                logger.error("后台任务执行失败 task_id=%s: %s", task_id, exc, exc_info=True)
+                try:
+                    await db.rollback()
                 except Exception:
                     pass
                 try:
-                    await task_service.fail_task(task_id, str(e))
+                    await task_service.fail_task(task_id, str(exc))
                 except Exception as fail_err:
-                    logger.error("标记任务失败时出错: %s", fail_err)
-                yield create_sse_event({"type": "error", "error": str(e)})
+                    logger.error("标记任务失败时出错 task_id=%s: %s", task_id, fail_err)
+                await publish_event(task_id, {
+                    "type": "error",
+                    "task_id": task_id,
+                    "error": str(exc),
+                })
+            finally:
+                # 无论如何都通知订阅者关流
+                await publish_end_sentinel(task_id)
 
     async def resume_diet_plan_stream(
         self,
@@ -393,16 +473,11 @@ class PlanService:
         task_id: str,
     ) -> AsyncGenerator[str, None]:
         """
-        恢复流式连接（断线重连）
+        恢复流式连接（断线重连 / 移动端切回前台）
 
-        查询任务当前状态：
-        - 已完成/失败/取消：直接返回结果
-        - 运行中/等待中：推送当前进度并轮询至终态
-
-        注意：当前架构下图执行与 SSE 生成器绑定，SSE 断开后图也会被取消。
-        因此 resume 主要用于客户端检查任务最终状态。
-
-        内部创建独立 db session，避免长时间轮询导致连接泄漏。
+        新架构下后台任务独立运行，本端点只负责：
+        1. 检查任务最终状态（已完成/失败 → 短路返回）
+        2. 否则订阅事件流 from_beginning=True 回放历史 + 实时跟进
 
         Args:
             user_id: 用户 ID
@@ -411,52 +486,58 @@ class PlanService:
         Yields:
             SSE 格式事件字符串
         """
-        async with AsyncSessionLocal() as stream_db:
-            task_service = TaskService(stream_db)
+        async with AsyncSessionLocal() as resume_db:
+            task_service = TaskService(resume_db)
             try:
                 task = await task_service.get_task(task_id, user_id)
+            except Exception as exc:
+                yield create_sse_event({"type": "error", "error": str(exc)})
+                return
 
-                if task.status == "completed":
-                    yield create_sse_event({
-                        "type": "task_completed",
-                        "task_id": task.id,
-                        "result": task.output_data or {},
-                    })
-                    return
-
-                if task.status == "failed":
-                    yield create_sse_event({
-                        "type": "error",
-                        "task_id": task.id,
-                        "error": task.error_message or "任务执行失败",
-                    })
-                    return
-
-                if task.status == "cancelled":
-                    yield create_sse_event({
-                        "type": "error",
-                        "task_id": task.id,
-                        "error": "任务已取消",
-                    })
-                    return
-
-                # running 或 pending：推送当前进度并轮询至终态
+            if task.status == "completed":
                 yield create_sse_event({
-                    "type": "resumed",
+                    "type": "task_completed",
                     "task_id": task.id,
-                    "status": task.status,
-                    "progress": task.progress,
-                    "current_node": task.current_node or "",
+                    "result": task.output_data or {},
                 })
+                return
 
-                # 轮询也使用心跳保活
-                async for event in stream_with_heartbeat(
-                    self._poll_task_progress(task_id, user_id, task_service=task_service)
-                ):
-                    yield event
+            if task.status == "failed":
+                yield create_sse_event({
+                    "type": "error",
+                    "task_id": task.id,
+                    "error": task.error_message or "任务执行失败",
+                })
+                return
 
-            except Exception as e:
-                yield create_sse_event({"type": "error", "error": str(e)})
+            if task.status == "cancelled":
+                yield create_sse_event({
+                    "type": "error",
+                    "task_id": task.id,
+                    "error": "任务已取消",
+                })
+                return
+
+            # running 或 pending：先确认事件流存在
+            has_history = await stream_exists(task_id)
+            yield create_sse_event({
+                "type": "resumed",
+                "task_id": task.id,
+                "status": task.status,
+                "progress": task.progress,
+                "current_node": task.current_node or "",
+                "has_history": has_history,
+            })
+
+        # 释放 db session 后再开始长连接订阅，避免持有 session 时间过长
+        async def _bus_to_sse() -> AsyncGenerator[str, None]:
+            # from_beginning=True 让客户端拿到完整历史，前端按事件 type 自行去重/合并
+            async for event in subscribe_events(task_id, from_beginning=True):
+                yield create_sse_event(event)
+            yield create_sse_event({"type": "done", "task_id": task_id})
+
+        async for chunk in stream_with_heartbeat(_bus_to_sse()):
+            yield chunk
 
     # ──────────── 内部方法 ────────────
 
@@ -608,53 +689,77 @@ class PlanService:
         progress_state: Dict[str, Any] | None = None,
     ):
         """
-        从 SSE 事件中提取进度并更新任务
+        从 SSE 事件字符串中提取进度并更新任务（兼容旧接口）
 
-        支持 custom 模式的 ProgressEvent（含 progress 字段）。
-
-        Args:
-            task_id: 任务 ID
-            event: SSE 事件字符串
-            task_service: 可选的独立 TaskService（流式方法传入）
+        新代码请使用 _update_task_progress_from_chunk 直接传 dict。
         """
-        svc = task_service or self.task_service
         try:
             if event.startswith("data: "):
                 data = json.loads(event[6:].strip())
-                progress = data.get("progress")
-                if progress is not None:
-                    progress_value = int(progress)
-                    node = data.get("node", "") or data.get("type", "")
-
-                    if progress_state is None:
-                        await svc.update_task_progress_lightweight(task_id, progress_value, node)
-                        return
-
-                    now = asyncio.get_running_loop().time()
-                    last_progress = progress_state.get("progress", -1)
-                    last_node = progress_state.get("node", "")
-                    last_saved = progress_state.get("saved_at", 0.0)
-                    progress_delta = abs(progress_value - last_progress) if last_progress >= 0 else progress_value
-                    progress_changed = progress_value != last_progress
-                    node_changed = node != last_node
-                    enough_time_elapsed = now - last_saved >= PROGRESS_DB_WRITE_INTERVAL_SECONDS
-                    should_persist = (
-                        last_progress < 0
-                        or progress_value >= 100
-                        or (progress_changed and progress_delta >= PROGRESS_DB_WRITE_DELTA)
-                        or (node_changed and enough_time_elapsed)
-                        or (progress_changed and enough_time_elapsed)
-                    )
-
-                    if not should_persist:
-                        return
-
-                    await svc.update_task_progress_lightweight(task_id, progress_value, node)
-                    progress_state["progress"] = progress_value
-                    progress_state["node"] = node
-                    progress_state["saved_at"] = now
+                await self._update_task_progress_from_chunk(
+                    task_id, data,
+                    task_service=task_service,
+                    progress_state=progress_state,
+                )
         except (json.JSONDecodeError, KeyError):
             pass
+
+    async def _update_task_progress_from_chunk(
+        self,
+        task_id: str,
+        chunk: Dict[str, Any],
+        *,
+        task_service: "TaskService | None" = None,
+        progress_state: Dict[str, Any] | None = None,
+    ):
+        """
+        从原始 chunk dict 中提取进度并节流写入数据库。
+
+        Args:
+            task_id: 任务 ID
+            chunk: ProgressEvent 序列化后的 dict（含 progress / node / type 等）
+            task_service: 后台任务专用 TaskService（持有独立 session）
+            progress_state: 跨调用复用的状态字典，控制写库频率
+        """
+        svc = task_service or self.task_service
+        progress = chunk.get("progress")
+        if progress is None:
+            return
+
+        try:
+            progress_value = int(progress)
+        except (TypeError, ValueError):
+            return
+
+        node = chunk.get("node", "") or chunk.get("type", "")
+
+        if progress_state is None:
+            await svc.update_task_progress_lightweight(task_id, progress_value, node)
+            return
+
+        now = asyncio.get_running_loop().time()
+        last_progress = progress_state.get("progress", -1)
+        last_node = progress_state.get("node", "")
+        last_saved = progress_state.get("saved_at", 0.0)
+        progress_delta = abs(progress_value - last_progress) if last_progress >= 0 else progress_value
+        progress_changed = progress_value != last_progress
+        node_changed = node != last_node
+        enough_time_elapsed = now - last_saved >= PROGRESS_DB_WRITE_INTERVAL_SECONDS
+        should_persist = (
+            last_progress < 0
+            or progress_value >= 100
+            or (progress_changed and progress_delta >= PROGRESS_DB_WRITE_DELTA)
+            or (node_changed and enough_time_elapsed)
+            or (progress_changed and enough_time_elapsed)
+        )
+
+        if not should_persist:
+            return
+
+        await svc.update_task_progress_lightweight(task_id, progress_value, node)
+        progress_state["progress"] = progress_value
+        progress_state["node"] = node
+        progress_state["saved_at"] = now
 
     async def _save_temp_plan(
         self,
