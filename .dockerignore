@@ -46,3 +46,17 @@ logs/
 *.tmp
 *.bak
 .DS_Store
+
+# 环境变量（敏感，由 compose --env-file 注入，不入镜像）
+.env
+.env.*
+!.env.example
+
+# 大数据资源
+knowledge/
+notebooks/
+*.ipynb
+
+# 不需要的缓存
+.ruff_cache/
+.mypy_cache/

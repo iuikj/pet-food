@@ -94,6 +94,8 @@ def pet_to_response(
         avatar_url=_resolve_avatar_url(pet.avatar_url, storage, request=request),
         health_status=pet.health_status,
         special_requirements=pet.special_requirements,
+        allergens=pet.allergens,
+        health_issues=pet.health_issues,
         is_active=pet.is_active,
         has_plan=has_plan,
         created_at=pet.created_at,
@@ -134,6 +136,8 @@ async def list_pets(
                 avatar_url=_resolve_avatar_url(pet["avatar_url"], storage, request=http_request),
                 health_status=pet["health_status"],
                 special_requirements=pet["special_requirements"],
+                allergens=pet.get("allergens"),
+                health_issues=pet.get("health_issues"),
                 is_active=pet["is_active"],
                 has_plan=pet["has_plan"],
                 created_at=pet["created_at"],
@@ -193,7 +197,9 @@ async def create_pet(
             weight=payload.weight,
             gender=payload.gender,
             health_status=payload.health_status,
-            special_requirements=payload.special_requirements
+            special_requirements=payload.special_requirements,
+            allergens=payload.allergens,
+            health_issues=payload.health_issues,
         )
 
         return ApiResponse(
@@ -302,7 +308,9 @@ async def update_pet(
             weight=payload.weight,
             gender=payload.gender,
             health_status=payload.health_status,
-            special_requirements=payload.special_requirements
+            special_requirements=payload.special_requirements,
+            allergens=payload.allergens,
+            health_issues=payload.health_issues,
         )
 
         if not pet:

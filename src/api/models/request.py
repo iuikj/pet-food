@@ -2,7 +2,7 @@
 请求模型（Pydantic）
 定义 API 请求的数据结构
 """
-from typing import Optional
+from typing import List, Optional
 from enum import Enum
 from pydantic import BaseModel, Field, EmailStr, field_validator
 from src.utils.strtuct import PetInformation
@@ -78,16 +78,17 @@ class CreatePlanRequest(BaseModel):
     # 以下字段兼容旧版本，当没有 pet_id 时使用
     pet_type: Optional[str] = Field(None, description="宠物类型 cat/dog")
     pet_breed: Optional[str] = Field(None, description="宠物品种")
-    pet_age: Optional[int] = Field(None, gt=0, le=300, description="宠物年龄（月）")
+    pet_age: Optional[int] = Field(None, gt=0, description="宠物年龄（月）")
     pet_weight: Optional[float] = Field(None, gt=0, le=1000, description="宠物体重（千克）")
     health_status: Optional[str] = Field(None, max_length=500, description="健康状况描述")
+    special_requirements: Optional[str] = Field(None, max_length=500, description="本次生成的定制需求")
     stream: bool = Field(default=False, description="是否使用流式输出")
 
 
 class UpdatePlanRequest(BaseModel):
     """更新饮食计划请求"""
-    pet_breed: Optional[str] = Field(None, max_length=50, description="宠物品种")
-    pet_age: Optional[int] = Field(None, gt=0, le=300, description="宠物年龄（月）")
+    pet_breed: Optional[str] = Field(None, max_length=100, description="宠物品种")
+    pet_age: Optional[int] = Field(None, gt=0, description="宠物年龄（月）")
     pet_weight: Optional[float] = Field(None, gt=0, le=1000, description="宠物体重（千克）")
     health_status: Optional[str] = Field(None, max_length=500, description="健康状况描述")
 
@@ -157,11 +158,13 @@ class CreatePetRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=50, description="宠物名称")
     type: str = Field(..., pattern=r'^(cat|dog)$', description="宠物类型: cat 或 dog")
     breed: Optional[str] = Field(None, max_length=100, description="宠物品种")
-    age: int = Field(..., gt=0, le=360, description="宠物年龄（月）")
+    age: int = Field(..., gt=0, description="宠物年龄（月）")
     weight: float = Field(..., gt=0, le=1000, description="宠物体重（千克）")
     gender: Optional[str] = Field(None, pattern=r'^(male|female)?$', description="性别: male 或 female")
     health_status: Optional[str] = Field(None, max_length=500, description="健康状况描述")
     special_requirements: Optional[str] = Field(None, max_length=500, description="特殊需求")
+    allergens: Optional[List[str]] = Field(None, description="过敏原列表")
+    health_issues: Optional[List[str]] = Field(None, description="健康问题列表")
 
 
 class UpdatePetRequest(BaseModel):
@@ -169,11 +172,13 @@ class UpdatePetRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=50, description="宠物名称")
     type: Optional[str] = Field(None, pattern=r'^(cat|dog)$', description="宠物类型: cat 或 dog")
     breed: Optional[str] = Field(None, max_length=100, description="宠物品种")
-    age: Optional[int] = Field(None, gt=0, le=360, description="宠物年龄（月）")
+    age: Optional[int] = Field(None, gt=0, description="宠物年龄（月）")
     weight: Optional[float] = Field(None, gt=0, le=1000, description="宠物体重（千克）")
     gender: Optional[str] = Field(None, pattern=r'^(male|female)?$', description="性别: male 或 female")
     health_status: Optional[str] = Field(None, max_length=500, description="健康状况描述")
     special_requirements: Optional[str] = Field(None, max_length=500, description="特殊需求")
+    allergens: Optional[List[str]] = Field(None, description="过敏原列表")
+    health_issues: Optional[List[str]] = Field(None, description="健康问题列表")
 
 
 class PetListRequest(BaseModel):

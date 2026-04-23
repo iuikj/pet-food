@@ -29,6 +29,8 @@ class PetService:
         gender: Optional[str] = None,
         health_status: Optional[str] = None,
         special_requirements: Optional[str] = None,
+        allergens: Optional[list[str]] = None,
+        health_issues: Optional[list[str]] = None,
         avatar_url: Optional[str] = None
     ) -> Pet:
         """
@@ -44,6 +46,8 @@ class PetService:
             gender: 性别 male/female
             health_status: 健康状况
             special_requirements: 特殊需求
+            allergens: 过敏原列表
+            health_issues: 健康问题列表
             avatar_url: 头像 URL
 
         Returns:
@@ -60,6 +64,8 @@ class PetService:
             gender=gender,
             health_status=health_status,
             special_requirements=special_requirements,
+            allergens=allergens,
+            health_issues=health_issues,
             avatar_url=avatar_url,
             is_active=True
         )
@@ -125,6 +131,8 @@ class PetService:
         gender: Optional[str] = None,
         health_status: Optional[str] = None,
         special_requirements: Optional[str] = None,
+        allergens: Optional[list[str]] = None,
+        health_issues: Optional[list[str]] = None,
         avatar_url: Optional[str] = None
     ) -> Optional[Pet]:
         """
@@ -141,6 +149,8 @@ class PetService:
             gender: 性别
             health_status: 健康状况
             special_requirements: 特殊需求
+            allergens: 过敏原列表
+            health_issues: 健康问题列表
             avatar_url: 头像 URL
 
         Returns:
@@ -166,6 +176,10 @@ class PetService:
             pet.health_status = health_status
         if special_requirements is not None:
             pet.special_requirements = special_requirements
+        if allergens is not None:
+            pet.allergens = allergens
+        if health_issues is not None:
+            pet.health_issues = health_issues
         if avatar_url is not None:
             pet.avatar_url = avatar_url
 
@@ -257,6 +271,8 @@ class PetService:
                 "avatar_url": pet.avatar_url,
                 "health_status": pet.health_status,
                 "special_requirements": pet.special_requirements,
+                "allergens": pet.allergens,
+                "health_issues": pet.health_issues,
                 "is_active": pet.is_active,
                 "has_plan": has_plan,
                 "created_at": pet.created_at,
@@ -290,5 +306,8 @@ class PetService:
             "pet_breed": pet.breed,
             "pet_age": pet.age,
             "pet_weight": float(pet.weight),
-            "health_status": pet.health_status or "健康"
+            "health_status": pet.health_status or "健康",
+            "special_requirements": pet.special_requirements,
+            "allergens": pet.allergens,
+            "health_issues": pet.health_issues,
         }

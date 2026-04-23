@@ -1,133 +1,307 @@
-# 生产环境 Docker Compose 配置
-# 包含 FastAPI、PostgreSQL、Redis、Nginx
+# ============================================================
+# 生产环境 Docker Compose（适配 2C4G，含 MinIO，不含 Milvus）
+# ------------------------------------------------------------
+# 使用:
+#   cd pet_food_backend/pet-food
+#   docker compose -f deployment/docker-compose.prod.yml \
+#                  --env-file deployment/.env.prod \
+#                  up -d --build
+#
+# 所有 mem_limit 按 4G 总内存划分：api 2g / pg 512m / redis 256m
+#                                 minio 384m / nginx 128m / 余量给系统
+# ============================================================
 
-version: '3.8'
+name: pet-food
 
 services:
-  # FastAPI 应用
+
+  # ─────────────── FastAPI 后端 ───────────────
+  # context 相对于 --project-directory (即 pet-food/ 目录)
   api:
     build:
       context: .
       dockerfile: Dockerfile
+    image: pet-food-api:latest
     container_name: pet-food-api
     restart: unless-stopped
+
+    # 构造一份干净的 env，而不是直接 env_file，避免敏感值被 compose 泄漏到日志
     environment:
-      # API 配置
+      # 基础
       API_HOST: 0.0.0.0
       API_PORT: 8000
       API_RELOAD: "false"
-      API_WORKERS: 4
-      LOG_LEVEL: info
+      API_WORKERS: ${API_WORKERS:-2}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      TZ: Asia/Shanghai
 
-      # JWT 配置
+      # JWT / 密钥（必填）
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
       JWT_REFRESH_TOKEN_EXPIRE_DAYS: 7
+      SECRET_KEY: ${SECRET_KEY}
 
-      # 数据库配置
+      # 数据库（容器内网地址）
       DATABASE_URL: postgresql+asyncpg://petfood:${POSTGRES_PASSWORD}@postgres:5432/petfood
       DATABASE_ECHO: "false"
 
-      # Redis 配置
+      # Redis（容器内网地址）
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_DB: 0
 
-      # CORS 配置
-      CORS_ORIGINS: ${CORS_ORIGINS}
+      # MinIO（内部 API 访问用容器名，浏览器访问预签名 URL 用 public_endpoint）
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_SECURE: "false"
+      MINIO_BUCKET: ${MINIO_BUCKET:-petfood-bucket}
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
+
+      # CORS / 主机白名单
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost","http://localhost:80","http://localhost:5173"]}
       CORS_ALLOW_CREDENTIALS: "true"
-      CORS_ALLOW_METHODS: '["GET","POST","PUT","DELETE","OPTIONS"]'
+      CORS_ALLOW_METHODS: '["GET","POST","PUT","DELETE","OPTIONS","PATCH"]'
       CORS_ALLOW_HEADERS: '["*"]'
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-["*"]}
 
-      # 安全配置
-      SECRET_KEY: ${SECRET_KEY}
-      ALLOWED_HOSTS: ${ALLOWED_HOSTS}
-
-      # 任务配置
-      TASK_TIMEOUT_SECONDS: 3600
-      TASK_MAX_CONCURRENT: 10
-
-      # 速率限制配置
+      # 任务 & 限流（4G 机器收紧并发）
+      TASK_TIMEOUT_SECONDS: ${TASK_TIMEOUT_SECONDS:-1800}
+      TASK_MAX_CONCURRENT: ${TASK_MAX_CONCURRENT:-2}
       RATE_LIMIT_ENABLED: "true"
       RATE_LIMIT_TIMES: 100
       RATE_LIMIT_SECONDS: 60
 
-      # LLM API 配置
+      # LLM / 搜索
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
       DASHSCOPE_API_BASE: ${DASHSCOPE_API_BASE:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
-      ZAI_API_KEY: ${ZAI_API_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
       ZAI_API_BASE: ${ZAI_API_BASE:-https://open.bigmodel.cn/api/paas/v4/}
       TAVILIY_API_KEY: ${TAVILIY_API_KEY}
       SILICONFLOW_API_BASE: ${SILICONFLOW_API_BASE:-https://api.siliconflow.cn}
-      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      MOONSHOT_API_KEY: ${MOONSHOT_API_KEY:-}
+
+      # 邮件（可选）
+      SMTP_HOST: ${SMTP_HOST:-smtp.qq.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_USE_TLS: "true"
 
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
 
-    networks:
-      - pet-food-network
+    networks: [pet-food-network]
+
+    mem_limit: 2g
+    mem_reservation: 1g
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
-  # PostgreSQL 数据库
+  # ─────────────── PostgreSQL ───────────────
+  # 版本对齐本机 PG 17，避免 pg_dump 17 -> pg 16 server 的跨版本坑
+  # （例如 SET transaction_timeout 是 PG 17 新参数，PG 16 不认）
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     container_name: pet-food-postgres
     restart: unless-stopped
+
     environment:
       POSTGRES_USER: petfood
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: petfood
       POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+      TZ: Asia/Shanghai
+
+    # 收紧内存使用（小机器必须）
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c max_connections=50
+      -c log_min_duration_statement=500
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-    networks:
-      - pet-food-network
+    networks: [pet-food-network]
+
+    mem_limit: 512m
+    mem_reservation: 256m
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U petfood"]
+      test: ["CMD-SHELL", "pg_isready -U petfood -d petfood"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Redis 缓存
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # ─────────────── Redis ───────────────
   redis:
     image: redis:7-alpine
     container_name: pet-food-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+
+    # --maxmemory 限内存，--maxmemory-policy 防 OOM
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 200mb
+      --maxmemory-policy allkeys-lru
+
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      TZ: Asia/Shanghai
 
     volumes:
       - redis_data:/data
 
-    networks:
-      - pet-food-network
+    networks: [pet-food-network]
+
+    mem_limit: 256m
+    mem_reservation: 128m
 
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
 
-  # Nginx 反向代理
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # ─────────────── MinIO 对象存储（头像等）───────────────
+  # 版本与本机保持一致：RELEASE.2024-08-17T01-24-54Z
+  # 数据格式完全兼容，可直接 bind mount 本机 data 目录实现零迁移
+  minio:
+    image: minio/minio:RELEASE.2024-08-17T01-24-54Z
+    container_name: pet-food-minio
+    restart: unless-stopped
+
+    command: server /data --console-address ":9001"
+
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # 关键：让预签名 URL 使用浏览器可达的地址（本机=localhost，生产=域名）
+      MINIO_SERVER_URL: ${MINIO_PUBLIC_ENDPOINT:-http://localhost:9000}
+      MINIO_BROWSER_REDIRECT_URL: ${MINIO_CONSOLE_PUBLIC_URL:-http://localhost:9001}
+      TZ: Asia/Shanghai
+
+    ports:
+      # 本机测试直接暴露，生产应走 Nginx 反代 + 防火墙
+      - "127.0.0.1:9000:9000"   # S3 API
+      - "127.0.0.1:9001:9001"   # Web Console
+
+    volumes:
+      # 默认用 Docker 卷；若想直接挂载本机 MinIO 数据目录实现零迁移，
+      # 在 .env.prod 设置 MINIO_DATA_PATH=D:\DevelopFiles\minio\data
+      - ${MINIO_DATA_PATH:-minio_data}:/data
+
+    networks: [pet-food-network]
+
+    mem_limit: 384m
+    mem_reservation: 192m
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # ─────────────── MinIO 初始化：创建 bucket（一次性）───────────────
+  # mc 客户端版本与 server 对齐
+  minio-init:
+    image: minio/mc:RELEASE.2024-08-17T11-33-50Z
+    container_name: pet-food-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks: [pet-food-network]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-petfood-bucket}
+    entrypoint: >
+      /bin/sh -c "
+        set -e;
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+        mc mb --ignore-existing local/$${MINIO_BUCKET};
+        echo 'MinIO bucket ready: '$${MINIO_BUCKET};
+      "
+    restart: "no"
+
+  # ─────────────── 前端（React 静态托管，Nginx 镜像）───────────────
+  # context 从 pet-food/ 往上 2 层到 Graduate/ ，再进 frontend/web-app
+  frontend:
+    build:
+      context: ../../frontend/web-app
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost/api/v1}
+        VITE_ENABLE_SSE: ${VITE_ENABLE_SSE:-true}
+        VITE_RECONNECT_DELAY: ${VITE_RECONNECT_DELAY:-3000}
+    image: pet-food-frontend:latest
+    container_name: pet-food-frontend
+    restart: unless-stopped
+    networks: [pet-food-network]
+
+    mem_limit: 128m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # ─────────────── Nginx 反向代理（对外入口）───────────────
   nginx:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     container_name: pet-food-nginx
     restart: unless-stopped
+
     ports:
       - "80:80"
-      - "443:443"
+      # - "443:443"   # 启用 TLS 时打开
 
+    # 路径相对 --project-directory (即 pet-food/)，所以要带 deployment/ 前缀
     volumes:
       - ./deployment/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./deployment/nginx/ssl:/etc/nginx/ssl:ro
@@ -135,26 +309,30 @@ services:
 
     depends_on:
       - api
+      - frontend
 
-    networks:
-      - pet-food-network
+    networks: [pet-food-network]
+
+    mem_limit: 128m
 
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
 
-# 数据卷
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   postgres_data:
-    driver: local
   redis_data:
-    driver: local
+  minio_data:
   nginx_logs:
-    driver: local
 
-# 网络
 networks:
   pet-food-network:
     driver: bridge

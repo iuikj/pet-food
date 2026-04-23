@@ -104,6 +104,9 @@ class Pet(Base):
     avatar_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     health_status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     special_requirements: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 结构化健康偏好（JSON 数组）
+    allergens: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    health_issues: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     # 软删除
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     # 时间信息
@@ -271,6 +274,14 @@ class Ingredient(Base):
     )
     is_system: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, index=True, comment="是否系统食材（全局只读）"
+    )
+
+    # 可视化资产 - 图标与缩略图
+    icon_key: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, comment="图标 key，格式 <library>:<name>，如 emoji:fish / mi:restaurant"
+    )
+    image_url: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, comment="缩略图引用，形如 minio://bucket/ingredients/xxx.jpg"
     )
 
     # 宏量营养素

@@ -192,6 +192,8 @@ class PetResponse(BaseModel):
     avatar_url: Optional[str] = None
     health_status: Optional[str] = None
     special_requirements: Optional[str] = None
+    allergens: Optional[list[str]] = None
+    health_issues: Optional[list[str]] = None
     is_active: bool
     has_plan: bool = False
     created_at: datetime

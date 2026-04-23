@@ -40,6 +40,9 @@ async def _resolve_pet_info(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={"code": 3001, "message": "宠物不存在", "detail": None},
             )
+        # 允许本次请求覆盖宠物档案里的 special_requirements（定制需求与档案偏好分离）
+        if request.special_requirements is not None:
+            pet_info["special_requirements"] = request.special_requirements
         return pet_info
 
     return PetInformation(
@@ -48,6 +51,7 @@ async def _resolve_pet_info(
         pet_age=request.pet_age or 12,
         pet_weight=request.pet_weight or 10,
         health_status=request.health_status or "健康",
+        special_requirements=request.special_requirements,
     ).model_dump()
 
 

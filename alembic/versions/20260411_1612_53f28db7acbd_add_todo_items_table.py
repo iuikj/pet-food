@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
@@ -16,6 +17,32 @@ revision: str = '53f28db7acbd'
 down_revision: Union[str, None] = '5f3c750681de'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+
+# ─────────────────────────────────────────────────────────────
+# Idempotent helpers: 兼容历史上不同 SQLAlchemy 版本生成的约束名
+# autogenerate 假定 fkey 叫 <table>_<col>_fkey，但 batch_op + inline
+# ForeignKey 实际生成的名字可能是 fk_diet_plans_pet_id 等。这里按
+# 字段反查真实约束名再 drop，缺失则跳过。
+# ─────────────────────────────────────────────────────────────
+def _drop_fk_by_column(table: str, column: str) -> None:
+    bind = op.get_bind()
+    insp = inspect(bind)
+    for fk in insp.get_foreign_keys(table):
+        if column in (fk.get('constrained_columns') or []):
+            name = fk.get('name')
+            if name:
+                op.drop_constraint(name, table, type_='foreignkey')
+                return
+    # 不存在也不报错：迁移幂等
+
+
+def _drop_index_if_exists(name: str, table: str) -> None:
+    bind = op.get_bind()
+    insp = inspect(bind)
+    existing = {ix['name'] for ix in insp.get_indexes(table)}
+    if name in existing:
+        op.drop_index(name, table_name=table)
 
 
 def upgrade() -> None:
@@ -46,17 +73,17 @@ def upgrade() -> None:
     op.create_index(op.f('ix_todo_items_is_completed'), 'todo_items', ['is_completed'], unique=False)
     op.create_index(op.f('ix_todo_items_pet_id'), 'todo_items', ['pet_id'], unique=False)
     op.create_index(op.f('ix_todo_items_user_id'), 'todo_items', ['user_id'], unique=False)
-    op.drop_index(op.f('idx_diet_plans_is_active'), table_name='diet_plans')
-    op.drop_index(op.f('idx_diet_plans_pet_id'), table_name='diet_plans')
+    _drop_index_if_exists('idx_diet_plans_is_active', 'diet_plans')
+    _drop_index_if_exists('idx_diet_plans_pet_id', 'diet_plans')
     op.create_index(op.f('ix_diet_plans_pet_id'), 'diet_plans', ['pet_id'], unique=False)
-    op.drop_constraint(op.f('diet_plans_pet_id_fkey'), 'diet_plans', type_='foreignkey')
+    _drop_fk_by_column('diet_plans', 'pet_id')
     op.create_foreign_key(None, 'diet_plans', 'pets', ['pet_id'], ['id'])
-    op.drop_index(op.f('idx_meal_records_meal_type'), table_name='meal_records')
-    op.drop_index(op.f('idx_meal_records_pet_date'), table_name='meal_records')
-    op.drop_index(op.f('idx_meal_records_pet_id'), table_name='meal_records')
-    op.drop_index(op.f('idx_pets_type'), table_name='pets')
-    op.drop_index(op.f('idx_pets_user_active'), table_name='pets')
-    op.drop_index(op.f('idx_pets_user_id'), table_name='pets')
+    _drop_index_if_exists('idx_meal_records_meal_type', 'meal_records')
+    _drop_index_if_exists('idx_meal_records_pet_date', 'meal_records')
+    _drop_index_if_exists('idx_meal_records_pet_id', 'meal_records')
+    _drop_index_if_exists('idx_pets_type', 'pets')
+    _drop_index_if_exists('idx_pets_user_active', 'pets')
+    _drop_index_if_exists('idx_pets_user_id', 'pets')
     op.alter_column('users', 'is_pro',
                existing_type=sa.BOOLEAN(),
                nullable=False,
@@ -77,7 +104,7 @@ def downgrade() -> None:
     op.create_index(op.f('idx_meal_records_pet_id'), 'meal_records', ['pet_id'], unique=False)
     op.create_index(op.f('idx_meal_records_pet_date'), 'meal_records', ['pet_id', 'meal_date'], unique=False)
     op.create_index(op.f('idx_meal_records_meal_type'), 'meal_records', ['meal_type'], unique=False)
-    op.drop_constraint(None, 'diet_plans', type_='foreignkey')
+    _drop_fk_by_column('diet_plans', 'pet_id')
     op.create_foreign_key(op.f('diet_plans_pet_id_fkey'), 'diet_plans', 'pets', ['pet_id'], ['id'], ondelete='SET NULL')
     op.drop_index(op.f('ix_diet_plans_pet_id'), table_name='diet_plans')
     op.create_index(op.f('idx_diet_plans_pet_id'), 'diet_plans', ['pet_id'], unique=False)

@@ -20,6 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | **DB** | `src/db/` | PostgreSQL + Redis 数据访问层 | |
 | **RAG** | `src/rag/` | 知识库管理、Milvus 混合检索、Rerank | [CLAUDE.md](./src/rag/CLAUDE.md) |
 | **Utils** | `src/utils/` | 通用工具（含 `strtuct.py` 数据结构） | |
+| **部署** | `deployment/` | Docker Compose + Nginx + 迁移脚本 | [README](./deployment/README.md) / [TROUBLESHOOTING](./deployment/TROUBLESHOOTING.md) |
 
 ---
 
@@ -265,9 +266,19 @@ pytest                                                # 全部
 pytest tests/test_auth.py -v                          # 单文件
 pytest --cov=src/api --cov-report=html                # 覆盖率
 
-# Docker
+# Docker 开发环境（仅 PG + Redis）
 docker-compose -f deployment/docker-compose.dev.yml up -d
+
+# Docker 生产/本机完整栈（PG + Redis + MinIO + API + 前端 + Nginx）
+.\deployment\deploy.ps1 up         # Windows (pwsh)
+./deployment/deploy.sh up          # Linux/Mac/Git Bash
+
+# 数据迁移（本机 → 容器，幂等）
+.\deployment\migrate.ps1 seed -PgSrcPassword '密码'    # 仅种子表（食材/补剂）
+.\deployment\migrate.ps1 all -PgSrcPassword '密码'     # 三件套全量迁移
 ```
+
+**部署踩坑**：见 [deployment/TROUBLESHOOTING.md](./deployment/TROUBLESHOOTING.md)（PowerShell 编码、compose 路径、Alembic 约束名、PG 跨版本、Vite 编译期变量等 12 条案例）。
 
 ### 环境变量
 
@@ -320,6 +331,14 @@ v1 默认模型: `dashscope:qwen3.5-plus` (规划/周计划/报告), `dashscope:
 ---
 
 ## 变更记录
+
+### 2026-04-23
+- 完成本机 Docker 全栈部署（含 MinIO）：`deployment/docker-compose.prod.yml` + `deploy.ps1`/`deploy.sh` + `migrate.ps1`
+- PG 从 16 升级到 17，与本机版本对齐（避免 `pg_dump` 跨版本 `SET transaction_timeout` 坑）
+- 修复 Dockerfile 的 `--no-deps` 依赖安装 bug；加入 entrypoint 自动跑 alembic 迁移
+- 修复 alembic `53f28db7acbd` 迁移对 FK 约束名的硬编码（改用 `inspect` 按字段反查，幂等）
+- 修复 Nginx location 优先级问题（`/api/` 加 `^~`，避免被静态资源正则劫持）
+- 新增 [deployment/TROUBLESHOOTING.md](./deployment/TROUBLESHOOTING.md) 沉淀 12 条部署案例
 
 ### 2025-03-20
 - 优化餐食服务中的营养数据处理和餐名显示

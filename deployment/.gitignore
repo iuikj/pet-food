@@ -1,0 +1,24 @@
+# 部署相关 .gitignore
+# 职责：防止敏感/临时文件入 git
+
+# ─── 环境变量实文件（含密钥，严禁提交）───
+.env.prod
+.env.prod.local
+.env.*.local
+
+# ─── 数据迁移产生的临时目录 ───
+# migrate.ps1 每次执行在此产出 pg_dump / rdb / 补丁后 SQL
+backup_*/
+
+# ─── SSL 证书（Let's Encrypt 签发，每机独立）───
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/live/
+nginx/ssl/archive/
+nginx/ssl/renewal/
+nginx/ssl/renewal-hooks/
+nginx/ssl/accounts/
+
+# ─── 日志 ───
+*.log
+logs/
