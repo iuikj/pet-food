@@ -391,6 +391,186 @@ MINIO_DATA_PATH=D:\DevelopFiles\minio\data
 
 ---
 
+## 🌐 云服务器部署经验（2026-04-24 腾讯云 CVM 实战）
+
+> 目标机器：腾讯云 CVM 2C4G，TencentOS 4.4（RHEL 9 兼容），IP 81.71.128.32，纯 IP + HTTP 部署。
+
+### 已验证的完整流程
+
+```
+1. 基础环境  → swap 2GB + Docker CE (dnf/阿里源) + 镜像加速
+2. 代码部署  → git clone -b <branch> (前端 main, 后端 feat/gent-advance)
+3. 目录结构  → /opt/petfood/{pet_food_backend/pet-food, frontend/web-app}
+4. 环境变量  → deployment/.env.prod (密钥全部重新生成，URL 改为云端 IP)
+5. 镜像构建  → docker compose build api frontend
+6. 服务启动  → docker compose up -d
+7. 数据库    → entrypoint.sh 自动跑 alembic upgrade head
+8. 种子数据  → 本地 pg_dump → scp → docker exec psql 导入
+9. 验证      → 前端 http://IP/ + API http://IP/api/v1/ + SSE 计划生成
+```
+
+### P13. TencentOS 4.x 安装 Docker：get.docker.com 不支持
+
+**症状**：`sh get-docker.sh --mirror Aliyun` 报 `ERROR: Unsupported distribution 'tencentos'`
+
+**根因**：get.docker.com 脚本不识别 TencentOS 发行版 ID。
+
+**修复**：手动添加阿里云 docker-ce CentOS 9 源（TencentOS 4.x = RHEL 9 兼容）：
+```bash
+cat > /etc/yum.repos.d/docker-ce.repo <<'REPO'
+[docker-ce-stable]
+name=Docker CE Stable - $basearch
+baseurl=https://mirrors.aliyun.com/docker-ce/linux/centos/9/$basearch/stable
+enabled=1
+gpgcheck=1
+gpgkey=https://mirrors.aliyun.com/docker-ce/linux/centos/gpg
+REPO
+dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+---
+
+### P14. Docker Hub 国内不通 + 镜像加速器 descriptor 错误
+
+**症状**：
+- Docker Hub 直连超时（`dial tcp 157.240.6.35:443: i/o timeout`）
+- `docker.xuanyuan.me` 报 `descriptor which reports content size of zero`
+- 阿里云 `registry.cn-hangzhou.aliyuncs.com` 对本地构建镜像报 `pull access denied`
+
+**修复**：使用 `docker.1ms.run`（2026-04 实测可用）：
+```json
+{"registry-mirrors": ["https://docker.1ms.run"]}
+```
+
+**注意**：镜像加速器只对 Docker Hub 公共镜像有效。本地构建的 `pet-food-api:latest` / `pet-food-frontend:latest` 不会被 pull，compose 会自动 fallback 到本地 build。
+
+---
+
+### P15. 构建慢：pypi / apt 源必须用腾讯云内网镜像
+
+**症状**：`uv pip install` 卡在 resolve 阶段 8+ 分钟，`pip install uv` 下载 24.9MB 用了 7 分钟。
+
+**根因**：腾讯云 CVM 访问阿里云 pypi 走公网（~13 kB/s），访问腾讯云 pypi 走内网（~135 MB/s，差 10000 倍）。
+
+**修复**：在 Dockerfile 的 builder stage **最前面**注入 ENV（必须在 `pip install uv` 之前）：
+```dockerfile
+FROM python:3.12-slim AS builder
+# 紧跟 FROM 之后
+ENV PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.cloud.tencent.com \
+    UV_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple/ \
+    UV_DEFAULT_INDEX=https://mirrors.cloud.tencent.com/pypi/simple/
+```
+
+apt 源同理：
+```dockerfile
+RUN sed -i 's|deb.debian.org|mirrors.cloud.tencent.com|g; s|security.debian.org|mirrors.cloud.tencent.com|g' \
+    /etc/apt/sources.list.d/debian.sources 2>/dev/null || true && apt-get update ...
+```
+
+**关键**：这些 patch 只在云服务器 Dockerfile 上做（`git checkout -- Dockerfile` 可恢复），不提交到仓库。
+
+---
+
+### P16. compose build context 路径：云端目录结构与本机不同
+
+**症状**：`unable to prepare context: path "/opt/petfood/pet_food_backend/frontend/web-app" not found`
+
+**根因**：本机 monorepo 结构是 `E:\Graduate\{pet_food_backend, frontend}`，compose 用相对路径 `../../frontend/web-app`。云端 clone 后目录层级不同。
+
+**修复**：compose 文件中 build context 改为绝对路径：
+```yaml
+api:
+  build:
+    context: /opt/petfood/pet_food_backend/pet-food
+frontend:
+  build:
+    context: /opt/petfood/frontend/web-app
+```
+
+nginx volumes 同理：
+```yaml
+volumes:
+  - /opt/petfood/pet_food_backend/pet-food/deployment/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  - /opt/petfood/pet_food_backend/pet-food/deployment/nginx/ssl:/etc/nginx/ssl:ro
+```
+
+---
+
+### P17. MINIO_SERVER_URL 不能带路径
+
+**症状**：`FATAL Invalid MINIO_SERVER_URL value: URL contains unexpected resources`
+
+**根因**：compose 里 `MINIO_SERVER_URL: ${MINIO_PUBLIC_ENDPOINT}` 继承了 `http://IP/minio-api`（带路径），MinIO 只接受 `http://host:port` 格式。
+
+**修复**：
+1. `.env.prod` 新增独立变量：`MINIO_SERVER_URL=http://81.71.128.32:9000`
+2. compose 改为：`MINIO_SERVER_URL: ${MINIO_SERVER_URL:-http://localhost:9000}`
+
+---
+
+### P18. 种子数据迁移：pg_dump --column-inserts 的 ON CONFLICT 改写陷阱
+
+**症状**：正则替换 `);` → `); ON CONFLICT (id) DO NOTHING;` 后，psql 报 `syntax error at or near "ON"`
+
+**根因**：`pg_dump --column-inserts` 生成的 INSERT 是多行格式，`);` 后面加的 `ON CONFLICT` 被 psql 当成独立语句。
+
+**修复（推荐）**：放弃幂等改写，直接用 COPY 格式（默认）+ TRUNCATE 先清空：
+```bash
+# 本地导出（不加 --column-inserts，默认 COPY 格式）
+pg_dump -h localhost -U postgres -d pet_food --data-only \
+    --table=ingredients --table=supplements \
+    --no-owner --no-privileges > seed_copy.sql
+
+# 云端先清空再导入
+docker exec pet-food-postgres psql -U petfood -d petfood \
+    -c "TRUNCATE TABLE ingredients, supplements RESTART IDENTITY CASCADE;"
+docker exec -i pet-food-postgres psql -U petfood -d petfood < seed_copy.sql
+```
+
+---
+
+### P19. Capacitor APK 发给别人安装失败
+
+**症状**：Debug APK 在开发机正常，发给别人报"应用未安装"。
+
+**根因**：Debug 签名的 APK 只能在开发机安装。
+
+**修复**：在 `android/app/build.gradle` 配置 release 签名：
+```gradle
+signingConfigs {
+    release {
+        storeFile file('../petfood-release.keystore')
+        storePassword "petfood2024"
+        keyAlias "petfood"
+        keyPassword "petfood2024"
+    }
+}
+buildTypes {
+    release {
+        signingConfig signingConfigs.release
+    }
+}
+```
+生成 keystore：`keytool -genkey -v -keystore petfood-release.keystore -alias petfood -keyalg RSA -keysize 2048 -validity 10000`
+构建：`cd android && ./gradlew assembleRelease`
+
+---
+
+### 云端运维速查
+
+| 操作 | 命令 |
+|------|------|
+| 查看所有容器 | `docker ps --format 'table {{.Names}}\t{{.Status}}'` |
+| API 实时日志 | `docker logs -f --tail 100 pet-food-api` |
+| 重启单个服务 | `docker compose -f deployment/docker-compose.prod.yml --env-file deployment/.env.prod restart api` |
+| 进入容器 | `docker exec -it pet-food-api bash` |
+| 数据库 CLI | `docker exec -it pet-food-postgres psql -U petfood -d petfood` |
+| 查看资源占用 | `docker stats --no-stream` |
+| 备份数据库 | `docker exec pet-food-postgres pg_dump -U petfood petfood \| gzip > backup.sql.gz` |
+
+---
+
 ## 🧭 给未来 AI session 的快速上手指引
 
 如果你是接手这个项目的 Claude Code session：
@@ -410,3 +590,94 @@ MINIO_DATA_PATH=D:\DevelopFiles\minio\data
    - 遇到新坑 → 按"症状→根因→修复"结构补一条
    - 版本锚点升级 → 更新顶部表格
    - 某条经验过时 → 用删除线 ~~旧做法~~ 而不是直接删（历史价值）
+
+### 云服务器现状（2026-04-24）
+
+| 项 | 值 |
+|---|---|
+| IP | 81.71.128.32 |
+| OS | TencentOS 4.4 (RHEL 9 兼容) |
+| 规格 | 2C / 3.6G + 2G swap |
+| Docker | 29.4.1 + Compose v5.1.3 |
+| 镜像加速 | docker.1ms.run |
+| 代码路径 | `/opt/petfood/{pet_food_backend/pet-food, frontend/web-app}` |
+| 后端分支 | `feat/gent-advance` |
+| 前端分支 | `main` |
+| 数据库 | petfood (user: petfood, 285 ingredients + 63 supplements) |
+| 访问入口 | http://81.71.128.32/ (前端) / http://81.71.128.32/api/v1/ (API) |
+
+### 云端 compose 与本机的差异
+
+compose 文件在云端做了以下**未提交到 git** 的修改（因为是环境特定的）：
+1. `api.build.context` → 绝对路径 `/opt/petfood/pet_food_backend/pet-food`
+2. `frontend.build.context` → 绝对路径 `/opt/petfood/frontend/web-app`
+3. `nginx.volumes` → 绝对路径
+4. `minio.environment.MINIO_SERVER_URL` → `${MINIO_SERVER_URL:-...}`（独立变量，不再复用 MINIO_PUBLIC_ENDPOINT）
+5. Dockerfile 在云端 patch 了腾讯云镜像源（apt + pypi），不提交
+
+### CI/CD 搭建指引（下一步）
+
+当前部署是手动 SSH + docker compose，下一步建议搭建 CI/CD：
+
+**推荐方案：GitHub Actions + SSH Deploy**
+
+```
+触发: push to main / feat/gent-advance
+  → GitHub Actions runner
+    → SSH 到 81.71.128.32
+      → git pull
+      → docker compose build --pull
+      → docker compose up -d
+      → health check
+```
+
+**需要解决的问题：**
+
+1. **compose 路径问题**：当前云端 compose 用绝对路径（P16），CI/CD 需要统一方案：
+   - 方案 A：用 `--project-directory /opt/petfood/pet_food_backend/pet-food` 参数，compose 文件保持相对路径
+   - 方案 B：生成 `docker-compose.cloud.yml` override 文件覆盖 build context
+   - 方案 C：用 `.env` 变量化 context 路径
+
+2. **Dockerfile 镜像源 patch**：当前手动 patch 腾讯云源，CI/CD 需要自动化：
+   - 方案 A：构建时传 `--build-arg PIP_INDEX_URL=...`（需改 Dockerfile 接收 ARG）
+   - 方案 B：CI 脚本里 `sed` 替换后构建，构建完 `git checkout -- Dockerfile`
+   - 方案 C：用 Docker BuildKit `--mount=type=secret` 注入 pip.conf
+
+3. **Secrets 管理**：
+   - GitHub Secrets 存 SSH 密钥（不要用密码，换 ed25519 key）
+   - `.env.prod` 不进 git，CI 从 GitHub Secrets 生成或 scp
+
+4. **前后端分仓**：两个独立 GitHub 仓库，CI 需要分别触发或用 monorepo workflow
+
+5. **零停机部署**：当前 `docker compose up -d` 会短暂中断，可考虑：
+   - `docker compose up -d --no-deps --build api` 逐服务滚动
+   - 或 blue-green 部署（需要额外 nginx 配置）
+
+**GitHub Actions 模板参考：**
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy to Cloud
+on:
+  push:
+    branches: [main, feat/gent-advance]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH Deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /opt/petfood/pet_food_backend/pet-food
+            git pull origin feat/gent-advance
+            # patch Dockerfile with Tencent mirrors
+            bash /root/patch_tencent.sh
+            docker compose -f deployment/docker-compose.prod.yml \
+              --env-file deployment/.env.prod up -d --build
+            sleep 10
+            curl -f http://localhost:8000/health || exit 1
+```
