@@ -4,6 +4,23 @@
 
 ---
 
+## 📚 文档导航
+
+| 文档 | 用途 |
+|------|------|
+| **[README.md](./README.md)** (本文) | Docker 部署基础：环境配置、启动、迁移 |
+| **[SETUP_GUIDE_81.71.128.32.md](./SETUP_GUIDE_81.71.128.32.md)** | **⭐ 针对腾讯云服务器的定制化 CD 配置（推荐）** |
+| **[CD_TAG_BASED.md](./CD_TAG_BASED.md)** | 基于版本标签的 CD 完整指南 |
+| **[QUICK_START_CD.md](./QUICK_START_CD.md)** | 5 分钟配置 CD 自动部署（通用） |
+| **[CD_GUIDE.md](./CD_GUIDE.md)** | CD 完整指南：Webhook/Cron 方案、回滚、监控 |
+| **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** | 部署踩坑日志（12 条案例） |
+
+**快速开始 CD**：
+- 如果你的服务器是腾讯云 81.71.128.32，直接看 **[SETUP_GUIDE_81.71.128.32.md](./SETUP_GUIDE_81.71.128.32.md)**
+- 其他服务器或需要了解更多方案，看 [QUICK_START_CD.md](./QUICK_START_CD.md)
+
+---
+
 ## 一、目录结构
 
 ```
@@ -16,6 +33,14 @@ pet_food_backend/pet-food/
 │   ├── entrypoint.sh                # API 容器入口：等 DB → 跑迁移 → 启 uvicorn
 │   ├── deploy.sh                    # Linux/Mac/Git Bash 一键脚本
 │   ├── deploy.ps1                   # Windows PowerShell 一键脚本
+│   ├── deploy-webhook.sh            # CD: Webhook 触发部署脚本
+│   ├── deploy-cron.sh               # CD: 定时拉取部署脚本
+│   ├── rollback.sh                  # CD: 回滚脚本
+│   ├── hooks.json                   # CD: Webhook 配置
+│   ├── petfood-webhook.service      # CD: systemd 服务配置
+│   ├── QUICK_START_CD.md            # CD: 5 分钟快速配置指南
+│   ├── CD_GUIDE.md                  # CD: 完整部署指南
+│   ├── TROUBLESHOOTING.md           # 部署踩坑日志
 │   └── nginx/
 │       ├── nginx.conf               # 前端 + API + SSE + MinIO 代理
 │       └── ssl/                     # 证书目录（上线后放）
