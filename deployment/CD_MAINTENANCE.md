@@ -1,0 +1,499 @@
+# CD 维护手册
+
+> 日常运维操作指南
+
+---
+
+## 📋 目录
+
+- [一、日常操作](#一日常操作)
+- [二、监控检查](#二监控检查)
+- [三、故障处理](#三故障处理)
+- [四、性能优化](#四性能优化)
+
+---
+
+## 一、日常操作
+
+### 1.1 发布新版本
+
+```bash
+# 1. 确保代码已提交
+git status
+
+# 2. 打标签（触发自动部署）
+git tag -a v1.2.3 -m "Release v1.2.3: 新功能描述"
+git push origin v1.2.3
+
+# 3. 查看部署进度
+# 访问：https://github.com/你的用户名/pet-food/actions
+
+# 4. 验证部署
+curl http://你的服务器IP/health
+```
+
+**版本号规范（语义化版本）：**
+- `v1.0.0` - 主版本（重大变更）
+- `v1.1.0` - 次版本（新功能）
+- `v1.1.1` - 修订版本（Bug 修复）
+
+---
+
+### 1.2 回滚版本
+
+```bash
+# SSH 登录服务器
+ssh root@你的服务器IP
+cd /opt/petfood/pet_food_backend/pet-food
+
+# 查看可回滚的版本
+cat deployment/.cd-state/deploy-history.log
+
+# 回滚到指定版本
+./deployment/rollback-ghcr.sh v1.1.0
+
+# 验证回滚
+curl http://localhost/health
+docker ps
+```
+
+---
+
+### 1.3 更新环境变量
+
+```bash
+# 1. 在服务器上修改配置
+ssh root@你的服务器IP
+nano /opt/petfood/pet_food_backend/pet-food/deployment/.env.prod
+
+# 2. 重启受影响的容器
+docker restart pet-food-api
+
+# 3. 验证配置生效
+docker logs pet-food-api --tail 50
+
+# 4. 同步更新 GitHub Secret
+# 访问：https://github.com/你的用户名/pet-food/settings/environments
+# 编辑 ENV_PROD_FILE Secret，粘贴新的 .env.prod 内容
+```
+
+---
+
+### 1.4 手动部署
+
+```bash
+# SSH 登录服务器
+ssh root@你的服务器IP
+cd /opt/petfood/pet_food_backend/pet-food
+
+# 手动执行部署
+./deployment/deploy-ghcr.sh v1.2.3
+
+# 查看部署日志
+tail -f deployment/.cd-state/deploy-ghcr.log
+```
+
+---
+
+### 1.5 重启服务
+
+```bash
+# 重启单个容器
+docker restart pet-food-api
+
+# 重启所有容器
+cd /opt/petfood/pet_food_backend/pet-food
+docker compose -f deployment/docker-compose.prod.yml restart
+
+# 完全重启（停止 -> 启动）
+docker compose -f deployment/docker-compose.prod.yml down
+docker compose -f deployment/docker-compose.prod.yml up -d
+```
+
+---
+
+## 二、监控检查
+
+### 2.1 查看容器状态
+
+```bash
+# 查看所有容器
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
+# 查看容器资源使用
+docker stats --no-stream
+
+# 查看容器详细信息
+docker inspect pet-food-api
+```
+
+---
+
+### 2.2 查看日志
+
+```bash
+# API 日志
+docker logs pet-food-api --tail 100 -f
+
+# Nginx 日志
+docker logs pet-food-nginx --tail 100 -f
+
+# PostgreSQL 日志
+docker logs pet-food-postgres --tail 100 -f
+
+# Redis 日志
+docker logs pet-food-redis --tail 100 -f
+
+# MinIO 日志
+docker logs pet-food-minio --tail 100 -f
+
+# 部署日志
+tail -f /opt/petfood/pet_food_backend/pet-food/deployment/.cd-state/deploy-ghcr.log
+```
+
+---
+
+### 2.3 健康检查
+
+```bash
+# API 健康检查
+curl http://localhost/health
+
+# 数据库连接测试
+docker exec pet-food-postgres psql -U petfood -d petfood -c "SELECT 1;"
+
+# Redis 连接测试
+docker exec pet-food-redis redis-cli -a 你的密码 ping
+
+# MinIO 健康检查
+curl http://localhost:9000/minio/health/live
+```
+
+---
+
+### 2.4 查看版本信息
+
+```bash
+# 当前运行版本
+cat /opt/petfood/pet_food_backend/pet-food/deployment/.cd-state/last_successful_api_tag
+
+# 部署历史
+cat /opt/petfood/pet_food_backend/pet-food/deployment/.cd-state/deploy-history.log
+
+# 镜像版本
+docker images | grep pet-food
+```
+
+---
+
+## 三、故障处理
+
+### 3.1 API 无法启动
+
+**排查步骤：**
+
+```bash
+# 1. 查看容器状态
+docker ps -a | grep pet-food-api
+
+# 2. 查看详细日志
+docker logs pet-food-api --tail 200
+
+# 3. 检查数据库连接
+docker exec pet-food-postgres psql -U petfood -d petfood -c "SELECT 1;"
+
+# 4. 检查环境变量
+docker exec pet-food-api env | grep DATABASE_URL
+
+# 5. 手动进入容器调试
+docker exec -it pet-food-api bash
+```
+
+**常见问题：**
+
+- **数据库密码错误** - 检查 `.env.prod` 中的 `POSTGRES_PASSWORD`
+- **端口冲突** - 检查 8000 端口是否被占用
+- **迁移失败** - 查看 Alembic 错误信息
+
+---
+
+### 3.2 健康检查失败
+
+**排查步骤：**
+
+```bash
+# 1. 测试 Nginx 到 API 的连接
+docker exec pet-food-nginx curl -v http://api:8000/health
+
+# 2. 测试 API 内部健康检查
+docker exec pet-food-api curl -v http://localhost:8000/health
+
+# 3. 查看 Nginx 配置
+docker exec pet-food-nginx cat /etc/nginx/nginx.conf
+
+# 4. 查看 Nginx 错误日志
+docker logs pet-food-nginx --tail 100 | grep error
+```
+
+---
+
+### 3.3 镜像拉取失败
+
+**排查步骤：**
+
+```bash
+# 1. 测试 GHCR 连接
+docker pull ghcr.io/你的用户名/pet-food-api:latest
+
+# 2. 使用镜像加速
+docker pull ghcr.1ms.run/你的用户名/pet-food-api:latest
+
+# 3. 检查 Docker 镜像配置
+docker info | grep -A 5 "Registry Mirrors"
+
+# 4. 手动登录 GHCR
+docker login ghcr.io -u 你的用户名 -p 你的Token
+```
+
+---
+
+### 3.4 磁盘空间不足
+
+**清理步骤：**
+
+```bash
+# 1. 查看磁盘使用
+df -h
+
+# 2. 查看 Docker 磁盘使用
+docker system df
+
+# 3. 清理未使用的镜像
+docker image prune -a
+
+# 4. 清理未使用的容器
+docker container prune
+
+# 5. 清理未使用的卷
+docker volume prune
+
+# 6. 清理构建缓存
+docker builder prune
+
+# 7. 一键清理（谨慎使用）
+docker system prune -a --volumes
+```
+
+---
+
+### 3.5 数据库问题
+
+**备份数据库：**
+
+```bash
+# 导出数据库
+docker exec pet-food-postgres pg_dump -U petfood petfood > backup_$(date +%Y%m%d).sql
+
+# 恢复数据库
+cat backup_20260426.sql | docker exec -i pet-food-postgres psql -U petfood petfood
+```
+
+**重置数据库（会丢失数据）：**
+
+```bash
+# 停止容器
+docker compose -f deployment/docker-compose.prod.yml down
+
+# 删除数据卷
+docker volume rm pet-food_postgres_data
+
+# 重新启动
+docker compose -f deployment/docker-compose.prod.yml up -d
+```
+
+---
+
+## 四、性能优化
+
+### 4.1 调整容器资源限制
+
+编辑 `docker-compose.prod.yml`：
+
+```yaml
+services:
+  api:
+    mem_limit: 4g        # 增加内存限制
+    mem_reservation: 2g  # 增加内存预留
+    cpus: 2.0            # 限制 CPU 核心数
+```
+
+---
+
+### 4.2 优化数据库性能
+
+```bash
+# 进入 PostgreSQL 容器
+docker exec -it pet-food-postgres psql -U petfood petfood
+
+# 查看慢查询
+SELECT query, calls, total_time, mean_time 
+FROM pg_stat_statements 
+ORDER BY mean_time DESC 
+LIMIT 10;
+
+# 分析表
+ANALYZE;
+
+# 重建索引
+REINDEX DATABASE petfood;
+```
+
+---
+
+### 4.3 清理日志
+
+```bash
+# 查看日志大小
+docker ps -q | xargs docker inspect --format='{{.Name}} {{.LogPath}}' | xargs -I {} sh -c 'echo {}; du -h $(echo {} | awk "{print \$2}")'
+
+# 清理日志（会丢失历史日志）
+truncate -s 0 $(docker inspect --format='{{.LogPath}}' pet-food-api)
+
+# 配置日志轮转（在 docker-compose.prod.yml 中）
+logging:
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+```
+
+---
+
+### 4.4 监控告警
+
+**推荐工具：**
+
+- **Prometheus + Grafana** - 指标监控
+- **Loki** - 日志聚合
+- **Uptime Kuma** - 服务可用性监控
+- **Sentry** - 错误追踪
+
+**简单监控脚本：**
+
+```bash
+#!/bin/bash
+# health-check.sh
+
+HEALTH_URL="http://localhost/health"
+ALERT_EMAIL="your-email@example.com"
+
+if ! curl -f -s "$HEALTH_URL" > /dev/null; then
+    echo "Health check failed!" | mail -s "Pet Food API Down" "$ALERT_EMAIL"
+fi
+```
+
+**添加到 crontab：**
+
+```bash
+# 每 5 分钟检查一次
+*/5 * * * * /opt/petfood/health-check.sh
+```
+
+---
+
+## 五、安全维护
+
+### 5.1 更新密钥
+
+```bash
+# 1. 生成新密钥
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# 2. 更新 .env.prod
+nano /opt/petfood/pet_food_backend/pet-food/deployment/.env.prod
+
+# 3. 重启 API
+docker restart pet-food-api
+
+# 4. 同步更新 GitHub Secret
+```
+
+---
+
+### 5.2 更新 SSL 证书
+
+```bash
+# 使用 Let's Encrypt
+certbot certonly --standalone -d your-domain.com
+
+# 复制证书到 nginx 目录
+cp /etc/letsencrypt/live/your-domain.com/fullchain.pem \
+   /opt/petfood/pet_food_backend/pet-food/deployment/nginx/ssl/
+cp /etc/letsencrypt/live/your-domain.com/privkey.pem \
+   /opt/petfood/pet_food_backend/pet-food/deployment/nginx/ssl/
+
+# 重启 Nginx
+docker restart pet-food-nginx
+```
+
+---
+
+### 5.3 审计日志
+
+```bash
+# 查看登录日志
+docker exec pet-food-api cat /var/log/auth.log
+
+# 查看 API 访问日志
+docker logs pet-food-nginx | grep -E "POST|PUT|DELETE"
+
+# 查看数据库连接日志
+docker logs pet-food-postgres | grep "connection"
+```
+
+---
+
+## 六、定期维护清单
+
+### 每日检查
+
+- [ ] 查看容器状态 `docker ps`
+- [ ] 检查健康检查 `curl http://localhost/health`
+- [ ] 查看错误日志 `docker logs pet-food-api --tail 50 | grep ERROR`
+
+### 每周检查
+
+- [ ] 查看磁盘使用 `df -h`
+- [ ] 清理旧镜像 `docker image prune`
+- [ ] 备份数据库
+- [ ] 查看部署历史
+
+### 每月检查
+
+- [ ] 更新系统包 `apt update && apt upgrade`
+- [ ] 更新 Docker `apt install docker-ce docker-ce-cli`
+- [ ] 审查安全日志
+- [ ] 性能分析和优化
+
+---
+
+## 七、应急联系
+
+**遇到紧急问题：**
+
+1. 查看 [CD_COMPLETE_GUIDE.md](./CD_COMPLETE_GUIDE.md) 故障排查章节
+2. 查看 [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) 完整踩坑日志
+3. 查看 GitHub Actions 日志
+4. 查看服务器日志
+
+**快速回滚：**
+
+```bash
+ssh root@你的服务器IP
+cd /opt/petfood/pet_food_backend/pet-food
+./deployment/rollback-ghcr.sh $(cat deployment/.cd-state/last_successful_api_tag)
+```
+
+---
+
+**文档维护：** 如有问题或改进建议，请提交 Issue 或 PR。

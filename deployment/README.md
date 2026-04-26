@@ -6,26 +6,39 @@
 
 ## 📚 文档导航
 
+### 🚀 GitHub Actions CD（推荐）
+
+| 文档 | 用途 | 适合人群 |
+|------|------|----------|
+| **[CD_QUICKSTART.md](./CD_QUICKSTART.md)** | **⭐ 5 步快速开始** | 新手，想快速上手 |
+| **[CD_COMPLETE_GUIDE.md](./CD_COMPLETE_GUIDE.md)** | **📖 完整指南** | 需要详细了解原理和配置 |
+| **[CD_MAINTENANCE.md](./CD_MAINTENANCE.md)** | **🔧 维护手册** | 日常运维操作 |
+| **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** | **🐛 故障排查** | 遇到问题时查阅 |
+
+### 📦 Docker 本地部署
+
 | 文档 | 用途 |
 |------|------|
 | **[README.md](./README.md)** (本文) | Docker 部署基础：环境配置、启动、迁移 |
-| **[CD_GITHUB_ACTIONS.md](./CD_GITHUB_ACTIONS.md)** | **⭐ GitHub Actions CD 完整指南（技术细节）** |
-| **[GITHUB_ACTIONS_QUICKSTART.md](../../GITHUB_ACTIONS_QUICKSTART.md)** | **🚀 5 步快速开始（推荐新手）** |
-| **[GITHUB_ACTIONS_SETUP_GUIDE.md](../../GITHUB_ACTIONS_SETUP_GUIDE.md)** | **📋 详细配置指南（含故障排查）** |
-| **[CD_IMPLEMENTATION_PLAN.md](../../CD_IMPLEMENTATION_PLAN.md)** | 实施计划和问题分析 |
-| **[server-setup.sh](./server-setup.sh)** | 服务器一键准备脚本 |
-| ~~[SETUP_GUIDE_81.71.128.32.md](./SETUP_GUIDE_81.71.128.32.md)~~ | 历史方案：腾讯云服务器的 Webhook 配置记录 |
-| ~~[CD_TAG_BASED.md](./CD_TAG_BASED.md)~~ | 历史方案：基于标签的 Webhook CD |
-| ~~[QUICK_START_CD.md](./QUICK_START_CD.md)~~ | 历史方案：5 分钟配置 Webhook/Cron |
-| ~~[CD_GUIDE.md](./CD_GUIDE.md)~~ | 历史方案：Webhook/Cron 完整指南 |
-| ~~[CD_PROGRESS_SUMMARY.md](./CD_PROGRESS_SUMMARY.md)~~ | 历史记录：Webhook 调试进度总结 |
-| **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** | 部署踩坑日志（12 条案例） |
+| **[.env.prod.example](./.env.prod.example)** | 环境变量模板 |
 
-**快速开始 CD**：
-- 🚀 **新手推荐**：[GITHUB_ACTIONS_QUICKSTART.md](../../GITHUB_ACTIONS_QUICKSTART.md) - 5 步完成配置
-- 📋 **详细配置**：[GITHUB_ACTIONS_SETUP_GUIDE.md](../../GITHUB_ACTIONS_SETUP_GUIDE.md) - 含故障排查
-- 📖 **技术细节**：[CD_GITHUB_ACTIONS.md](./CD_GITHUB_ACTIONS.md) - 完整的技术文档
-- Webhook 相关文档仅作历史参考，不再继续扩展
+### 🗂️ 历史文档（仅供参考）
+
+<details>
+<summary>点击展开历史 Webhook 方案文档</summary>
+
+| 文档 | 说明 |
+|------|------|
+| [CD_GITHUB_ACTIONS.md](./CD_GITHUB_ACTIONS.md) | 旧版 GitHub Actions 指南 |
+| [SETUP_GUIDE_81.71.128.32.md](./SETUP_GUIDE_81.71.128.32.md) | 腾讯云服务器 Webhook 配置 |
+| [CD_TAG_BASED.md](./CD_TAG_BASED.md) | 基于标签的 Webhook CD |
+| [QUICK_START_CD.md](./QUICK_START_CD.md) | Webhook/Cron 快速配置 |
+| [CD_GUIDE.md](./CD_GUIDE.md) | Webhook/Cron 完整指南 |
+| [CD_PROGRESS_SUMMARY.md](./CD_PROGRESS_SUMMARY.md) | Webhook 调试进度总结 |
+
+**注意：** 这些文档已过时，不再维护。推荐使用 GitHub Actions 方案。
+
+</details>
 
 ---
 

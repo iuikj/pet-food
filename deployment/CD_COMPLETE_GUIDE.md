@@ -1,0 +1,558 @@
+# GitHub Actions CD 完整指南
+
+> 宠物饮食助手 - 基于 GitHub Actions 的自动化部署流程
+
+**最后更新：** 2026-04-26  
+**状态：** ✅ 生产可用
+
+---
+
+## 📋 目录
+
+- [一、概述](#一概述)
+- [二、前置准备](#二前置准备)
+- [三、配置步骤](#三配置步骤)
+- [四、使用方式](#四使用方式)
+- [五、维护操作](#五维护操作)
+- [六、故障排查](#六故障排查)
+- [七、踩坑记录](#七踩坑记录)
+
+---
+
+## 一、概述
+
+### 1.1 架构图
+
+```
+┌─────────────┐      ┌──────────────┐      ┌─────────────┐
+│  Git Push   │─────▶│ GitHub       │─────▶│  服务器     │
+│  Tag v*.*.*  │      │  Actions     │      │ 81.71.128.32│
+└─────────────┘      └──────────────┘      └─────────────┘
+                            │
+                            ├─ Build API Image
+                            ├─ Build Frontend Image
+                            ├─ Push to GHCR
+                            └─ SSH Deploy
+```
+
+### 1.2 工作流程
+
+1. **触发**：推送 `v*.*.*` 格式的 Git 标签
+2. **构建**：并行构建后端和前端 Docker 镜像
+3. **推送**：镜像推送到 GitHub Container Registry (GHCR)
+4. **部署**：SSH 到服务器，拉取镜像并更新容器
+5. **验证**：健康检查确认部署成功
+
+### 1.3 关键特性
+
+- ✅ **零停机部署** - Docker 滚动更新
+- ✅ **镜像加速** - 使用 `ghcr.1ms.run` 国内镜像
+- ✅ **自动回滚** - 部署失败自动回滚到上一版本
+- ✅ **健康检查** - 30 次重试确保服务可用
+- ✅ **版本管理** - 基于 Git 标签的语义化版本
+
+---
+
+## 二、前置准备
+
+### 2.1 服务器要求
+
+- **操作系统**：Linux (Ubuntu/CentOS/Debian)
+- **Docker**：20.10+
+- **Docker Compose**：2.0+
+- **内存**：≥4GB
+- **磁盘**：≥20GB
+
+### 2.2 本地工具
+
+- Git
+- SSH 客户端
+- 文本编辑器
+
+### 2.3 GitHub 权限
+
+- 仓库 Admin 权限（配置 Secrets 和 Environments）
+- Packages Write 权限（推送镜像到 GHCR）
+
+---
+
+## 三、配置步骤
+
+### 3.1 生成 SSH 密钥
+
+```bash
+# 生成 ED25519 密钥（推荐）
+ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/github_actions_deploy
+
+# 或生成 RSA 密钥（兼容性更好）
+ssh-keygen -t rsa -b 4096 -C "github-actions-deploy" -f ~/.ssh/github_actions_deploy
+```
+
+**添加公钥到服务器：**
+
+```bash
+# 复制公钥
+cat ~/.ssh/github_actions_deploy.pub
+
+# SSH 登录服务器
+ssh root@81.71.128.32
+
+# 添加到 authorized_keys
+echo "公钥内容" >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+
+# 测试连接
+ssh -i ~/.ssh/github_actions_deploy root@81.71.128.32
+```
+
+### 3.2 配置 GitHub Environment
+
+1. 访问：`https://github.com/你的用户名/pet-food/settings/environments`
+2. 创建 Environment：`pet-food`
+3. 添加以下 Secrets：
+
+| Secret 名称 | 说明 | 示例值 |
+|------------|------|--------|
+| `SERVER_HOST` | 服务器 IP | `81.71.128.32` |
+| `SERVER_USER` | SSH 用户名 | `root` |
+| `SERVER_PORT` | SSH 端口 | `22` |
+| `SERVER_SSH_KEY` | SSH 私钥 | `~/.ssh/github_actions_deploy` 的完整内容 |
+| `SERVER_APP_DIR` | 应用目录 | `/opt/petfood/pet_food_backend/pet-food` |
+| `GHCR_USERNAME` | GitHub 用户名 | 你的 GitHub 用户名 |
+| `GHCR_TOKEN` | GitHub Token | 创建 PAT (packages:write) |
+| `ENV_PROD_FILE` | 生产环境变量 | 服务器上 `.env.prod` 的完整内容 |
+
+### 3.3 创建 GitHub Personal Access Token
+
+1. 访问：`https://github.com/settings/tokens/new`
+2. 勾选权限：
+   - `write:packages` - 推送镜像到 GHCR
+   - `read:packages` - 拉取镜像
+3. 生成 Token 并保存到 `GHCR_TOKEN` Secret
+
+### 3.4 准备服务器环境
+
+```bash
+# SSH 登录服务器
+ssh root@81.71.128.32
+
+# 创建应用目录
+mkdir -p /opt/petfood/pet_food_backend/pet-food/deployment/nginx
+
+# 配置 Docker 镜像加速
+sudo tee /etc/docker/daemon.json > /dev/null <<EOF
+{
+  "registry-mirrors": [
+    "https://docker.1ms.run",
+    "https://ghcr.1ms.run"
+  ]
+}
+EOF
+
+# 重启 Docker
+sudo systemctl restart docker
+
+# 验证配置
+docker info | grep -A 5 "Registry Mirrors"
+```
+
+### 3.5 创建 .env.prod 文件
+
+在服务器上创建 `/opt/petfood/pet_food_backend/pet-food/deployment/.env.prod`：
+
+```bash
+# 复制模板
+cp deployment/.env.prod.example deployment/.env.prod
+
+# 编辑配置
+nano deployment/.env.prod
+```
+
+**必填项：**
+- `JWT_SECRET_KEY` - 随机 32 字节字符串
+- `SECRET_KEY` - 随机 32 字节字符串
+- `POSTGRES_PASSWORD` - 数据库密码
+- `REDIS_PASSWORD` - Redis 密码
+- `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` - MinIO 凭证
+- `MINIO_PUBLIC_ENDPOINT` - `http://81.71.128.32:9000`
+- `DASHSCOPE_API_KEY` - 阿里云 DashScope API Key
+- `TAVILIY_API_KEY` - Tavily 搜索 API Key
+
+**生成随机密钥：**
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+---
+
+## 四、使用方式
+
+### 4.1 发布新版本
+
+```bash
+# 1. 提交代码
+git add .
+git commit -m "feat: 新功能"
+git push origin master
+
+# 2. 打标签（触发部署）
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+
+# 3. 查看部署进度
+# 访问：https://github.com/你的用户名/pet-food/actions
+```
+
+### 4.2 查看部署日志
+
+```bash
+# SSH 登录服务器
+ssh root@81.71.128.32
+
+# 查看部署日志
+tail -f /opt/petfood/pet_food_backend/pet-food/deployment/.cd-state/deploy-ghcr.log
+
+# 查看容器状态
+docker ps
+
+# 查看 API 日志
+docker logs pet-food-api --tail 100 -f
+```
+
+### 4.3 验证部署
+
+```bash
+# 健康检查
+curl http://81.71.128.32/health
+
+# 预期输出：
+# {"code":0,"message":"ok","data":{"status":"healthy","version":"1.0.0"}}
+
+# 查看所有容器
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+---
+
+## 五、维护操作
+
+### 5.1 回滚版本
+
+```bash
+# SSH 登录服务器
+ssh root@81.71.128.32
+cd /opt/petfood/pet_food_backend/pet-food
+
+# 回滚到指定版本
+./deployment/rollback-ghcr.sh v0.9.0
+
+# 查看回滚日志
+tail -50 deployment/.cd-state/deploy-ghcr.log
+```
+
+### 5.2 手动部署
+
+```bash
+# SSH 登录服务器
+ssh root@81.71.128.32
+cd /opt/petfood/pet_food_backend/pet-food
+
+# 手动执行部署脚本
+./deployment/deploy-ghcr.sh v1.0.0
+```
+
+### 5.3 更新环境变量
+
+```bash
+# 1. 在服务器上修改 .env.prod
+ssh root@81.71.128.32
+nano /opt/petfood/pet_food_backend/pet-food/deployment/.env.prod
+
+# 2. 重启容器
+docker restart pet-food-api
+
+# 3. 同步更新 GitHub Secret
+# 访问：https://github.com/你的用户名/pet-food/settings/environments
+# 编辑 ENV_PROD_FILE Secret，粘贴新的 .env.prod 内容
+```
+
+### 5.4 查看历史部署
+
+```bash
+# 查看部署历史
+cat /opt/petfood/pet_food_backend/pet-food/deployment/.cd-state/deploy-history.log
+
+# 查看当前版本
+cat /opt/petfood/pet_food_backend/pet-food/deployment/.cd-state/last_successful_api_tag
+```
+
+### 5.5 清理旧镜像
+
+```bash
+# 查看镜像
+docker images | grep pet-food
+
+# 删除旧镜像（保留最近 3 个版本）
+docker images | grep pet-food-api | tail -n +4 | awk '{print $3}' | xargs docker rmi
+```
+
+---
+
+## 六、故障排查
+
+### 6.1 部署失败
+
+**症状：** GitHub Actions 显示部署失败
+
+**排查步骤：**
+
+```bash
+# 1. 查看 GitHub Actions 日志
+# 访问：https://github.com/你的用户名/pet-food/actions
+
+# 2. SSH 到服务器查看详细日志
+ssh root@81.71.128.32
+tail -100 /opt/petfood/pet_food_backend/pet-food/deployment/.cd-state/deploy-ghcr.log
+
+# 3. 查看容器状态
+docker ps -a
+
+# 4. 查看容器日志
+docker logs pet-food-api --tail 100
+```
+
+### 6.2 健康检查超时
+
+**症状：** 部署脚本显示 "Waiting for health endpoint... (30/30)"
+
+**可能原因：**
+
+1. **API 启动失败** - 查看 API 日志
+2. **数据库连接失败** - 检查 `DATABASE_URL` 配置
+3. **端口未暴露** - 检查 docker-compose 配置
+4. **Nginx 配置错误** - 查看 Nginx 日志
+
+**解决方案：**
+
+```bash
+# 查看 API 日志
+docker logs pet-food-api --tail 100
+
+# 查看 Nginx 日志
+docker logs pet-food-nginx --tail 50
+
+# 手动测试健康检查
+curl -v http://localhost/health
+
+# 测试 API 容器内部健康检查
+docker exec pet-food-api curl -f http://localhost:8000/health
+```
+
+### 6.3 镜像拉取失败
+
+**症状：** "Error response from daemon: pull access denied"
+
+**解决方案：**
+
+```bash
+# 1. 检查 GHCR 认证
+docker login ghcr.io -u 你的用户名 -p 你的Token
+
+# 2. 手动拉取测试
+docker pull ghcr.io/你的用户名/pet-food-api:v1.0.0
+
+# 3. 使用镜像加速
+docker pull ghcr.1ms.run/你的用户名/pet-food-api:v1.0.0
+```
+
+### 6.4 SSH 连接失败
+
+**症状：** "Permission denied (publickey)"
+
+**解决方案：**
+
+```bash
+# 1. 验证 SSH 密钥
+ssh -i ~/.ssh/github_actions_deploy root@81.71.128.32
+
+# 2. 检查服务器 authorized_keys
+ssh root@81.71.128.32
+cat ~/.ssh/authorized_keys
+
+# 3. 检查 GitHub Secret
+# 确保 SERVER_SSH_KEY 包含完整的私钥内容（包括 BEGIN 和 END 行）
+```
+
+---
+
+## 七、踩坑记录
+
+### 7.1 Environment Secrets 配置错误
+
+**问题：** Secrets 配置到了 Repository secrets 而不是 Environment secrets
+
+**现象：**
+```
+SSH_KEY: 
+SERVER_HOST: 
+SERVER_USER: 
+```
+
+**解决方案：**
+- 在 workflow 中添加 `environment: pet-food`
+- 或将 Secrets 移动到 Repository secrets
+
+**教训：** Environment secrets 需要在 workflow 中显式指定 `environment` 字段才能访问
+
+---
+
+### 7.2 MinIO 启动失败
+
+**问题：** `MINIO_SERVER_URL` 配置包含路径
+
+**现象：**
+```
+FATAL Invalid MINIO_SERVER_URL value: http://81.71.128.32/minio-api
+```
+
+**解决方案：**
+```bash
+# 错误配置
+MINIO_PUBLIC_ENDPOINT=http://81.71.128.32/minio-api
+
+# 正确配置
+MINIO_PUBLIC_ENDPOINT=http://81.71.128.32:9000
+```
+
+**教训：** MinIO 的 `MINIO_SERVER_URL` 不能包含路径，只能是 `http(s)://host:port` 格式
+
+---
+
+### 7.3 PostgreSQL 密码认证失败
+
+**问题：** `.env.prod` 中的密码与数据库实际密码不一致
+
+**现象：**
+```
+asyncpg.exceptions.InvalidPasswordError: password authentication failed for user "petfood"
+```
+
+**解决方案：**
+```bash
+# 方法 1：修复密码
+nano /opt/petfood/pet_food_backend/pet-food/deployment/.env.prod
+docker restart pet-food-api
+
+# 方法 2：重置数据库（会丢失数据）
+docker compose down
+docker volume rm pet-food_postgres_data
+# 修改 .env.prod 中的密码
+./deployment/deploy-ghcr.sh v1.0.0
+```
+
+**教训：** 首次部署时确保 `.env.prod` 中的密码与 docker-compose 中的一致
+
+---
+
+### 7.4 镜像加速配置无效
+
+**问题：** Docker 的 `registry-mirrors` 只对 Docker Hub 自动生效
+
+**现象：** 从 `ghcr.io` 拉取镜像仍然很慢
+
+**解决方案：**
+- 修改 `deploy-ghcr.sh` 脚本，手动替换域名
+- 使用 `docker pull ghcr.1ms.run/...` 然后 `docker tag` 回原始名称
+
+**教训：** GHCR 镜像加速需要手动替换域名，不能依赖 `registry-mirrors`
+
+---
+
+### 7.5 heredoc 语法错误
+
+**问题：** YAML 中的 heredoc 无法正确展开变量
+
+**现象：**
+```
+unexpected character "$" in variable name "$ENV_PROD_FILE"
+```
+
+**解决方案：**
+```yaml
+# 错误写法
+ssh "cat > file << 'EOF'
+$ENV_PROD_FILE
+EOF"
+
+# 正确写法
+echo "$ENV_PROD_FILE" | ssh "cat > file"
+```
+
+**教训：** 在 YAML 中传递多行内容，使用管道比 heredoc 更可靠
+
+---
+
+### 7.6 SSH 命令超时
+
+**问题：** 镜像下载时间过长，超过默认超时时间
+
+**现象：**
+```
+2026/04/26 06:51:30 Run Command Timeout
+```
+
+**解决方案：**
+```yaml
+# 增加超时时间
+- uses: appleboy/ssh-action@v1.2.0
+  with:
+    command_timeout: 30m  # 默认 10m
+```
+
+**教训：** 国内服务器拉取 GHCR 镜像较慢，需要增加超时时间或配置镜像加速
+
+---
+
+### 7.7 Nginx 配置路径错误
+
+**问题：** `--project-directory` 设置导致路径重复
+
+**现象：**
+```
+mount src=/opt/petfood/pet_food_backend/pet-food/deployment/deployment/nginx/nginx.conf
+```
+
+**解决方案：**
+- 使用部署脚本 `deploy-ghcr.sh` 而不是直接调用 `docker compose`
+- 脚本会自动处理 `--project-directory` 路径
+
+**教训：** 使用封装好的部署脚本，避免手动处理复杂的路径逻辑
+
+---
+
+## 八、参考资料
+
+### 8.1 相关文档
+
+- [README.md](./README.md) - Docker 部署基础
+- [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) - 完整踩坑日志
+- [.env.prod.example](./.env.prod.example) - 环境变量模板
+
+### 8.2 脚本文件
+
+- `deploy-ghcr.sh` - 部署脚本（支持镜像加速）
+- `rollback-ghcr.sh` - 回滚脚本
+- `docker-compose.prod.yml` - 生产环境 Compose 配置
+- `docker-compose.cd.yml` - CD 覆盖配置
+
+### 8.3 外部链接
+
+- [GitHub Actions 文档](https://docs.github.com/en/actions)
+- [Docker Compose 文档](https://docs.docker.com/compose/)
+- [GHCR 文档](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+- [毫秒镜像](https://1ms.run/) - GHCR 国内加速
+
+---
+
+**文档维护：** 如有问题或改进建议，请提交 Issue 或 PR。
