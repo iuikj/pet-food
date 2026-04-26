@@ -147,6 +147,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug secrets
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT || '22' }}
+          SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+        run: |
+          echo "Checking environment variables..."
+          echo "SERVER_HOST: ${SERVER_HOST:-EMPTY}"
+          echo "SERVER_USER: ${SERVER_USER:-EMPTY}"
+          echo "SERVER_PORT: ${SERVER_PORT:-EMPTY}"
+          echo "SERVER_APP_DIR: ${SERVER_APP_DIR:-EMPTY}"
+          echo "SSH_KEY length: ${#SSH_KEY}"
+
+          if [ -z "$SERVER_HOST" ]; then
+            echo "ERROR: SERVER_HOST is empty!"
+            exit 1
+          fi
+
       - name: Setup SSH key and sync files
         env:
           SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
