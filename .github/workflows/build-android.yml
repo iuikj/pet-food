@@ -15,6 +15,9 @@ env:
   JAVA_VERSION: '21'
   NODE_VERSION: '24'
 
+permissions:
+  contents: write  # 允许创建 Release 和上传文件
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
