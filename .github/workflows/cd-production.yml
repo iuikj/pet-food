@@ -143,7 +143,7 @@ jobs:
       - prepare
       - build-api
       - build-frontend
-    environment: production
+    environment: pet-food
     steps:
       - uses: actions/checkout@v4
 
