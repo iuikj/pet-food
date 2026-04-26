@@ -31,6 +31,12 @@ MIRROR_REGISTRY="${MIRROR_REGISTRY:-ghcr.1ms.run}"
 
 mkdir -p "$STATE_DIR"
 
+# 定义 log 函数（必须在使用前定义）
+log() {
+    local message="$1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $message" | tee -a "$LOG_FILE"
+}
+
 if [ -z "$IMAGE_TAG" ]; then
     echo "Usage: $0 <image-tag>" >&2
     exit 1
@@ -55,11 +61,6 @@ if [ "$USE_MIRROR" = "true" ]; then
 else
     API_IMAGE_PULL="$API_IMAGE"
 fi
-
-log() {
-    local message="$1"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $message" | tee -a "$LOG_FILE"
-}
 
 compose() {
     docker compose \
