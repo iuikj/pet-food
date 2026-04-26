@@ -71,6 +71,16 @@ jobs:
         working-directory: frontend/web-app
         run: npx cap sync android
 
+      - name: Copy background-runner dependencies
+        working-directory: frontend/web-app
+        run: |
+          mkdir -p android/capacitor-cordova-android-plugins/src/main/libs
+          mkdir -p android/app/libs
+          cp node_modules/@capacitor/background-runner/android/src/main/libs/android-js-engine-release.aar \
+             android/capacitor-cordova-android-plugins/src/main/libs/
+          cp node_modules/@capacitor/background-runner/android/src/main/libs/android-js-engine-release.aar \
+             android/app/libs/
+
       - name: Build Android APK (Debug)
         working-directory: frontend/web-app/android
         run: |
