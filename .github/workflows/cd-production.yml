@@ -174,6 +174,7 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_PORT: ${{ secrets.SERVER_PORT || '22' }}
           SERVER_APP_DIR: ${{ secrets.SERVER_APP_DIR }}
+          ENV_PROD_FILE: ${{ secrets.ENV_PROD_FILE }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
@@ -195,6 +196,12 @@ jobs:
           scp -i ~/.ssh/deploy_key -P $SERVER_PORT \
             deployment/nginx/nginx.conf \
             $SERVER_USER@$SERVER_HOST:$SERVER_APP_DIR/deployment/nginx/
+
+          # 创建 .env.prod 文件
+          ssh -i ~/.ssh/deploy_key -p $SERVER_PORT $SERVER_USER@$SERVER_HOST \
+            "cat > $SERVER_APP_DIR/deployment/.env.prod << 'EOF'
+$ENV_PROD_FILE
+EOF"
 
       - name: Deploy to server
         uses: appleboy/ssh-action@v1.2.0
