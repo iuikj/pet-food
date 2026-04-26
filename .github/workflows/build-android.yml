@@ -71,6 +71,15 @@ jobs:
         working-directory: frontend/web-app
         run: npx cap sync android
 
+      - name: Debug - Check aar file
+        working-directory: frontend/web-app
+        run: |
+          echo "Checking for android-js-engine-release.aar..."
+          ls -la node_modules/@capacitor/background-runner/android/src/main/libs/ || echo "Directory not found"
+          echo "Android rootDir will be: $(pwd)/android"
+          echo "Expected aar path: $(pwd)/node_modules/@capacitor/background-runner/android/src/main/libs/android-js-engine-release.aar"
+          test -f node_modules/@capacitor/background-runner/android/src/main/libs/android-js-engine-release.aar && echo "✓ File exists" || echo "✗ File NOT found"
+
       - name: Copy background-runner dependencies
         working-directory: frontend/web-app
         run: |
