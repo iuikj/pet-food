@@ -147,18 +147,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Sync deployment files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          source: "deployment/docker-compose.prod.yml,deployment/docker-compose.cd.yml,deployment/deploy-ghcr.sh,deployment/rollback-ghcr.sh,deployment/nginx/nginx.conf"
-          target: ${{ secrets.SERVER_APP_DIR }}
-          strip_components: 0
+      - name: Setup SSH key and sync files
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy API image on server
+          # 创建服务器目录
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.SERVER_PORT || 22 }} ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} \
+            "mkdir -p ${{ secrets.SERVER_APP_DIR }}/deployment/nginx"
+
+          # 同步部署文件
+          scp -i ~/.ssh/deploy_key -P ${{ secrets.SERVER_PORT || 22 }} \
+            deployment/docker-compose.prod.yml \
+            deployment/docker-compose.cd.yml \
+            deployment/deploy-ghcr.sh \
+            deployment/rollback-ghcr.sh \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_APP_DIR }}/deployment/
+
+          scp -i ~/.ssh/deploy_key -P ${{ secrets.SERVER_PORT || 22 }} \
+            deployment/nginx/nginx.conf \
+            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_APP_DIR }}/deployment/nginx/
+
+      - name: Deploy to server
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SERVER_HOST }}
