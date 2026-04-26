@@ -1,0 +1,115 @@
+name: Build Android APK
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  JAVA_VERSION: '17'
+  NODE_VERSION: '20'
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    environment: pet-food
+
+    steps:
+      - name: Checkout frontend repository
+        uses: actions/checkout@v4
+        with:
+          repository: iuikj/pet-food-frontend
+          ref: ${{ github.ref_name || inputs.version }}
+          path: frontend
+          token: ${{ secrets.FRONTEND_REPOSITORY_TOKEN != '' && secrets.FRONTEND_REPOSITORY_TOKEN || github.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/web-app/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        working-directory: frontend/web-app
+        run: npm ci
+
+      - name: Build web app
+        working-directory: frontend/web-app
+        env:
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || 'http://81.71.128.32/api/v1' }}
+          VITE_ENABLE_SSE: ${{ vars.VITE_ENABLE_SSE || 'true' }}
+          VITE_RECONNECT_DELAY: ${{ vars.VITE_RECONNECT_DELAY || '3000' }}
+        run: npm run build
+
+      - name: Sync Capacitor
+        working-directory: frontend/web-app
+        run: npx cap sync android
+
+      - name: Build Android APK (Debug)
+        working-directory: frontend/web-app/android
+        run: ./gradlew assembleDebug
+
+      - name: Build Android APK (Release)
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: frontend/web-app/android
+        env:
+          KEYSTORE_FILE: ${{ secrets.ANDROID_KEYSTORE_FILE }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # 如果有签名配置，构建 Release APK
+          if [ -n "$KEYSTORE_FILE" ]; then
+            echo "$KEYSTORE_FILE" | base64 -d > release.keystore
+            ./gradlew assembleRelease \
+              -Pandroid.injected.signing.store.file=release.keystore \
+              -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+              -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+              -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+          else
+            echo "⚠️ No keystore configured, skipping release build"
+          fi
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: pet-food-debug-${{ github.ref_name || inputs.version }}
+          path: frontend/web-app/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: Upload Release APK
+        if: startsWith(github.ref, 'refs/tags/') && secrets.ANDROID_KEYSTORE_FILE != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pet-food-release-${{ github.ref_name || inputs.version }}
+          path: frontend/web-app/android/app/build/outputs/apk/release/*.apk
+          retention-days: 90
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            frontend/web-app/android/app/build/outputs/apk/debug/*.apk
+            frontend/web-app/android/app/build/outputs/apk/release/*.apk
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
