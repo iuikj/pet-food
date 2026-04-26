@@ -1,0 +1,17 @@
+[Unit]
+# DEPRECATED: legacy webhook systemd unit kept only for history.
+Description=Pet Food Webhook Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/petfood-cd
+ExecStart=/usr/local/bin/webhook -hooks /opt/petfood-cd/hooks.json -port 9000 -verbose
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

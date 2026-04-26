@@ -1,0 +1,35 @@
+[
+  {
+    "id": "deprecated-deploy-petfood",
+    "execute-command": "/opt/petfood-cd/deploy-webhook.sh",
+    "command-working-directory": "/opt/petfood",
+    "response-message": "DEPRECATED: use GitHub Actions CD instead of this webhook template",
+    "pass-arguments-to-command": [],
+    "pass-environment-to-command": [],
+    "trigger-rule": {
+      "and": [
+        {
+          "match": {
+            "type": "payload-hmac-sha256",
+            "secret": "CHANGE_ME_TO_YOUR_WEBHOOK_SECRET",
+            "parameter": {
+              "source": "header",
+              "name": "X-Hub-Signature-256"
+            }
+          }
+        },
+        {
+          "match": {
+            "type": "value",
+            "value": "refs/heads/main",
+            "parameter": {
+              "source": "payload",
+              "name": "ref"
+            }
+          }
+        }
+      ]
+    },
+    "trigger-rule-mismatch-http-response-code": 400
+  }
+]

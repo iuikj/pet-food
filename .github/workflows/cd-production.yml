@@ -1,0 +1,195 @@
+name: CD Production
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Release tag to deploy, for example v1.3.2"
+        required: true
+      frontend_ref:
+        description: "Optional frontend git ref. Defaults to the same value as image_tag."
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: production-${{ github.ref_name || inputs.image_tag }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
+  API_IMAGE_REPO: pet-food-api
+  FRONTEND_IMAGE_REPO: pet-food-frontend
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      frontend_ref: ${{ steps.meta.outputs.frontend_ref }}
+    steps:
+      - name: Derive release metadata
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            IMAGE_TAG="${{ inputs.image_tag }}"
+            FRONTEND_REF="${{ inputs.frontend_ref }}"
+          else
+            IMAGE_TAG="${GITHUB_REF_NAME}"
+            FRONTEND_REF=""
+          fi
+
+          if [ -z "$FRONTEND_REF" ]; then
+            FRONTEND_REF="$IMAGE_TAG"
+          fi
+
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "frontend_ref=$FRONTEND_REF" >> "$GITHUB_OUTPUT"
+
+  validate:
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv
+          uv sync --all-groups
+
+      - name: Run health tests
+        env:
+          JWT_SECRET_KEY: test-secret-key-for-ci-only
+          SECRET_KEY: test-app-secret-key-for-ci-only
+          DATABASE_URL: sqlite+aiosqlite:///:memory:
+          REDIS_URL: redis://localhost:6379/0
+          API_RELOAD: "true"
+        run: uv run pytest tests/test_health.py
+
+      - name: Validate deploy scripts and compose files
+        run: |
+          bash -n deployment/deploy-ghcr.sh
+          bash -n deployment/rollback-ghcr.sh
+          API_IMAGE=ghcr.io/${{ github.repository_owner }}/pet-food-api:test docker compose \
+            --project-directory . \
+            -f deployment/docker-compose.prod.yml \
+            -f deployment/docker-compose.cd.yml \
+            --env-file deployment/.env.prod.example \
+            config > /dev/null
+
+  build-api:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - validate
+    outputs:
+      image_tag: ${{ needs.prepare.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/pet-food-api:${{ needs.prepare.outputs.image_tag }}
+            ghcr.io/${{ github.repository_owner }}/pet-food-api:latest
+
+  build-frontend:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - validate
+    steps:
+      - name: Check out frontend repository
+        uses: actions/checkout@v4
+        with:
+          repository: iuikj/pet-food-frontend
+          ref: ${{ needs.prepare.outputs.frontend_ref }}
+          path: frontend
+          token: ${{ secrets.FRONTEND_REPOSITORY_TOKEN != '' && secrets.FRONTEND_REPOSITORY_TOKEN || github.token }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend/web-app
+          file: ./frontend/web-app/Dockerfile
+          push: true
+          build-args: |
+            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || 'http://localhost/api/v1' }}
+            VITE_ENABLE_SSE=${{ vars.VITE_ENABLE_SSE || 'true' }}
+            VITE_RECONNECT_DELAY=${{ vars.VITE_RECONNECT_DELAY || '3000' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/pet-food-frontend:${{ needs.prepare.outputs.image_tag }}
+            ghcr.io/${{ github.repository_owner }}/pet-food-frontend:latest
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - build-api
+      - build-frontend
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync deployment files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          source: "deployment/docker-compose.prod.yml,deployment/docker-compose.cd.yml,deployment/deploy-ghcr.sh,deployment/rollback-ghcr.sh,deployment/nginx/nginx.conf"
+          target: ${{ secrets.SERVER_APP_DIR }}
+          strip_components: 0
+
+      - name: Deploy API image on server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.SERVER_APP_DIR }}"
+            chmod +x deployment/deploy-ghcr.sh deployment/rollback-ghcr.sh
+            export REGISTRY="${{ env.REGISTRY }}"
+            export IMAGE_NAMESPACE="${{ env.IMAGE_NAMESPACE }}"
+            export API_IMAGE_REPO="${{ env.API_IMAGE_REPO }}"
+            export FRONTEND_IMAGE="ghcr.io/${{ github.repository_owner }}/pet-food-frontend:${{ needs.prepare.outputs.image_tag }}"
+            export PULL_FRONTEND_IMAGE="true"
+            export GHCR_USERNAME="${{ secrets.GHCR_USERNAME }}"
+            export GHCR_TOKEN="${{ secrets.GHCR_TOKEN }}"
+            ./deployment/deploy-ghcr.sh "${{ needs.prepare.outputs.image_tag }}"

@@ -9,15 +9,23 @@
 | 文档 | 用途 |
 |------|------|
 | **[README.md](./README.md)** (本文) | Docker 部署基础：环境配置、启动、迁移 |
-| **[SETUP_GUIDE_81.71.128.32.md](./SETUP_GUIDE_81.71.128.32.md)** | **⭐ 针对腾讯云服务器的定制化 CD 配置（推荐）** |
-| **[CD_TAG_BASED.md](./CD_TAG_BASED.md)** | 基于版本标签的 CD 完整指南 |
-| **[QUICK_START_CD.md](./QUICK_START_CD.md)** | 5 分钟配置 CD 自动部署（通用） |
-| **[CD_GUIDE.md](./CD_GUIDE.md)** | CD 完整指南：Webhook/Cron 方案、回滚、监控 |
+| **[CD_GITHUB_ACTIONS.md](./CD_GITHUB_ACTIONS.md)** | **⭐ GitHub Actions CD 完整指南（技术细节）** |
+| **[GITHUB_ACTIONS_QUICKSTART.md](../../GITHUB_ACTIONS_QUICKSTART.md)** | **🚀 5 步快速开始（推荐新手）** |
+| **[GITHUB_ACTIONS_SETUP_GUIDE.md](../../GITHUB_ACTIONS_SETUP_GUIDE.md)** | **📋 详细配置指南（含故障排查）** |
+| **[CD_IMPLEMENTATION_PLAN.md](../../CD_IMPLEMENTATION_PLAN.md)** | 实施计划和问题分析 |
+| **[server-setup.sh](./server-setup.sh)** | 服务器一键准备脚本 |
+| ~~[SETUP_GUIDE_81.71.128.32.md](./SETUP_GUIDE_81.71.128.32.md)~~ | 历史方案：腾讯云服务器的 Webhook 配置记录 |
+| ~~[CD_TAG_BASED.md](./CD_TAG_BASED.md)~~ | 历史方案：基于标签的 Webhook CD |
+| ~~[QUICK_START_CD.md](./QUICK_START_CD.md)~~ | 历史方案：5 分钟配置 Webhook/Cron |
+| ~~[CD_GUIDE.md](./CD_GUIDE.md)~~ | 历史方案：Webhook/Cron 完整指南 |
+| ~~[CD_PROGRESS_SUMMARY.md](./CD_PROGRESS_SUMMARY.md)~~ | 历史记录：Webhook 调试进度总结 |
 | **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** | 部署踩坑日志（12 条案例） |
 
 **快速开始 CD**：
-- 如果你的服务器是腾讯云 81.71.128.32，直接看 **[SETUP_GUIDE_81.71.128.32.md](./SETUP_GUIDE_81.71.128.32.md)**
-- 其他服务器或需要了解更多方案，看 [QUICK_START_CD.md](./QUICK_START_CD.md)
+- 🚀 **新手推荐**：[GITHUB_ACTIONS_QUICKSTART.md](../../GITHUB_ACTIONS_QUICKSTART.md) - 5 步完成配置
+- 📋 **详细配置**：[GITHUB_ACTIONS_SETUP_GUIDE.md](../../GITHUB_ACTIONS_SETUP_GUIDE.md) - 含故障排查
+- 📖 **技术细节**：[CD_GITHUB_ACTIONS.md](./CD_GITHUB_ACTIONS.md) - 完整的技术文档
+- Webhook 相关文档仅作历史参考，不再继续扩展
 
 ---
 
@@ -33,13 +41,19 @@ pet_food_backend/pet-food/
 │   ├── entrypoint.sh                # API 容器入口：等 DB → 跑迁移 → 启 uvicorn
 │   ├── deploy.sh                    # Linux/Mac/Git Bash 一键脚本
 │   ├── deploy.ps1                   # Windows PowerShell 一键脚本
-│   ├── deploy-webhook.sh            # CD: Webhook 触发部署脚本
-│   ├── deploy-cron.sh               # CD: 定时拉取部署脚本
-│   ├── rollback.sh                  # CD: 回滚脚本
-│   ├── hooks.json                   # CD: Webhook 配置
-│   ├── petfood-webhook.service      # CD: systemd 服务配置
-│   ├── QUICK_START_CD.md            # CD: 5 分钟快速配置指南
-│   ├── CD_GUIDE.md                  # CD: 完整部署指南
+│   ├── docker-compose.cd.yml        # CD: GitHub Actions 覆盖 compose（GHCR 镜像）
+│   ├── deploy-ghcr.sh               # CD: 服务器拉取 GHCR 镜像并更新 API
+│   ├── rollback-ghcr.sh             # CD: API 镜像回滚脚本
+│   ├── CD_GITHUB_ACTIONS.md         # CD: 当前推荐的 GitHub Actions 指南
+│   ├── QUICK_START_CD.md            # 历史方案：Webhook/Cron 快速配置
+│   ├── CD_GUIDE.md                  # 历史方案：Webhook/Cron 完整指南
+│   ├── CD_TAG_BASED.md              # 历史方案：Tag + Webhook
+│   ├── CD_PROGRESS_SUMMARY.md       # 历史记录：Webhook 调试总结
+│   ├── deploy-webhook.sh            # 历史脚本：Webhook 触发部署
+│   ├── deploy-cron.sh               # 历史脚本：定时拉取部署
+│   ├── rollback.sh                  # 历史脚本：Webhook 方案回滚
+│   ├── hooks.json                   # 历史模板：Webhook 配置
+│   ├── petfood-webhook.service      # 历史模板：Webhook systemd 服务
 │   ├── TROUBLESHOOTING.md           # 部署踩坑日志
 │   └── nginx/
 │       ├── nginx.conf               # 前端 + API + SSE + MinIO 代理
@@ -289,6 +303,9 @@ redis-cli -a <pwd> -n 1 --rdb db1.rdb  # 手动每个 DB 单独导
 ---
 
 ## 五、切换到云服务器的变更点
+
+如果你准备使用 **GitHub Actions + GHCR**，请优先阅读 [CD_GITHUB_ACTIONS.md](./CD_GITHUB_ACTIONS.md)。
+当前方案会在后端 workflow 中额外 checkout 前端仓库 `iuikj/pet-food-frontend`，并一起构建前后端镜像。
 
 本机配置迁到云服务器只需改 3 处：
 

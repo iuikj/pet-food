@@ -1,0 +1,8 @@
+services:
+  api:
+    build: null
+    image: ${API_IMAGE:?API_IMAGE is required for CD deployments}
+
+  frontend:
+    build: null
+    image: ${FRONTEND_IMAGE:-pet-food-frontend:latest}
