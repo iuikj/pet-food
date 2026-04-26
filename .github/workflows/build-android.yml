@@ -109,12 +109,11 @@ jobs:
         run: |
           # 如果有签名配置，构建 Release APK
           if [ -n "$KEYSTORE_FILE" ]; then
-            echo "$KEYSTORE_FILE" | base64 -d > release.keystore
-            ./gradlew assembleRelease \
-              -Pandroid.injected.signing.store.file=release.keystore \
-              -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
-              -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
-              -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+            echo "Creating keystore file..."
+            echo "$KEYSTORE_FILE" | base64 -d > petfood-release.keystore
+            ls -la petfood-release.keystore
+            echo "Building Release APK..."
+            ./gradlew assembleRelease
           else
             echo "⚠️ No keystore configured, skipping release build"
           fi
