@@ -57,6 +57,10 @@ jobs:
           VITE_RECONNECT_DELAY: ${{ vars.VITE_RECONNECT_DELAY || '3000' }}
         run: npm run build
 
+      - name: Add Android platform
+        working-directory: frontend/web-app
+        run: npx cap add android
+
       - name: Sync Capacitor
         working-directory: frontend/web-app
         run: npx cap sync android
