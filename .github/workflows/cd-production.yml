@@ -143,6 +143,7 @@ jobs:
       - prepare
       - build-api
       - build-frontend
+    environment: production
     steps:
       - uses: actions/checkout@v4
 
