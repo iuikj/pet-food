@@ -121,7 +121,7 @@ async def health_check():
     return {
         "code": 0,
         "message": "ok",
-        "data": {"status": "healthy", "version": "1.0.0"},
+        "data": {"status": "healthy", "version": "1.0.2"},
     }
 
 
@@ -134,7 +134,7 @@ async def health_check_detail():
         "message": "ok",
         "data": {
             "status": "healthy" if (db_status and redis_status) else "unhealthy",
-            "version": "1.0.1",
+            "version": "1.0.2",
             "components": {
                 "database": {"status": "healthy" if db_status else "unhealthy"},
                 "redis": {"status": "healthy" if redis_status else "unhealthy"},
