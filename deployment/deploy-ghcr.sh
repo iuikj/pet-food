@@ -26,6 +26,8 @@ GHCR_TOKEN="${GHCR_TOKEN:-}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-http://localhost/health}"
 HEALTHCHECK_RETRIES="${HEALTHCHECK_RETRIES:-30}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-2}"
+USE_MIRROR="${USE_MIRROR:-true}"
+MIRROR_REGISTRY="${MIRROR_REGISTRY:-ghcr.1ms.run}"
 
 mkdir -p "$STATE_DIR"
 
@@ -45,6 +47,14 @@ if [ ! -f "$COMPOSE_CD_FILE" ]; then
 fi
 
 API_IMAGE="${REGISTRY}/${IMAGE_NAMESPACE,,}/${API_IMAGE_REPO}:${IMAGE_TAG}"
+
+# 如果启用镜像加速，使用镜像地址拉取
+if [ "$USE_MIRROR" = "true" ]; then
+    API_IMAGE_PULL="${MIRROR_REGISTRY}/${IMAGE_NAMESPACE,,}/${API_IMAGE_REPO}:${IMAGE_TAG}"
+    log "Using mirror registry: $MIRROR_REGISTRY"
+else
+    API_IMAGE_PULL="$API_IMAGE"
+fi
 
 log() {
     local message="$1"
@@ -78,10 +88,29 @@ deploy_stack() {
     export FRONTEND_IMAGE
 
     compose config > /dev/null
-    compose pull api
-    if [ "$PULL_FRONTEND_IMAGE" = "true" ]; then
-        compose pull frontend
+
+    # 使用镜像地址拉取 API 镜像
+    if [ "$USE_MIRROR" = "true" ]; then
+        log "Pulling API image from mirror: $API_IMAGE_PULL"
+        docker pull "$API_IMAGE_PULL"
+        # 重新标记为原始镜像名
+        docker tag "$API_IMAGE_PULL" "$API_IMAGE"
+    else
+        compose pull api
     fi
+
+    if [ "$PULL_FRONTEND_IMAGE" = "true" ]; then
+        # 前端镜像也使用镜像加速
+        if [ "$USE_MIRROR" = "true" ]; then
+            FRONTEND_IMAGE_MIRROR="${FRONTEND_IMAGE/ghcr.io/$MIRROR_REGISTRY}"
+            log "Pulling frontend image from mirror: $FRONTEND_IMAGE_MIRROR"
+            docker pull "$FRONTEND_IMAGE_MIRROR"
+            docker tag "$FRONTEND_IMAGE_MIRROR" "$FRONTEND_IMAGE"
+        else
+            compose pull frontend
+        fi
+    fi
+
     compose up -d api frontend nginx
 }
 
