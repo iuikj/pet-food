@@ -74,8 +74,8 @@ jobs:
         env:
           JWT_SECRET_KEY: test-secret-key-for-ci-only
           SECRET_KEY: test-app-secret-key-for-ci-only
-          DATABASE_URL: sqlite+aiosqlite:///:memory:
-          REDIS_URL: redis://localhost:6379/0
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          REDIS_URL: "redis://localhost:6379/0"
           API_RELOAD: "true"
         run: uv run pytest tests/test_health.py
 
