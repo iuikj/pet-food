@@ -237,8 +237,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 20s
+      retries: 5
+      start_period: 40s
 
     logging:
       driver: json-file
