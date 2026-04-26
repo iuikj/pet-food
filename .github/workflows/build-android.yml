@@ -94,12 +94,13 @@ jobs:
           retention-days: 30
 
       - name: Upload Release APK
-        if: startsWith(github.ref, 'refs/tags/') && secrets.ANDROID_KEYSTORE_FILE != ''
+        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: pet-food-release-${{ github.ref_name || inputs.version }}
           path: frontend/web-app/android/app/build/outputs/apk/release/*.apk
           retention-days: 90
+          if-no-files-found: ignore
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
