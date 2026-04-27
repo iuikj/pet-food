@@ -104,7 +104,7 @@ jobs:
         working-directory: frontend/web-app
         run: |
           echo "Copying Android app icons..."
-          cp -r assets/IconKitchen-Output/android/res/* android/app/src/main/res/
+          cp -r assets/IconKitchen-Output/android-res/res/* android/app/src/main/res/
           echo "✓ Icons copied"
 
       - name: Debug - Check aar file

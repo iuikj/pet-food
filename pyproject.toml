@@ -1,6 +1,6 @@
 [project]
 name = "pet-food"
-version = "0.1.0"
+version = "0.2.4"
 description = "基于 LangGraph 多智能体系统的宠物饮食计划智能助手"
 readme = "README.md"
 requires-python = ">=3.12"
