@@ -35,23 +35,15 @@ case "$COMPONENT" in
     backend)
         echo "==> Syncing backend to $VERSION"
 
-        # 1. pyproject.toml
+        # pyproject.toml (src/__version__.py 会自动读取它)
         if [ -f pyproject.toml ]; then
             sed -i.bak -E "s/^version = \"[^\"]+\"/version = \"$VERSION\"/" pyproject.toml
             rm -f pyproject.toml.bak
             echo "  ✓ pyproject.toml"
         fi
 
-        # 2. src/__version__.py
-        if [ -f src/__version__.py ]; then
-            sed -i.bak -E "s/^__version__ = \"[^\"]+\"/__version__ = \"$VERSION\"/" src/__version__.py
-            rm -f src/__version__.py.bak
-            echo "  ✓ src/__version__.py"
-        fi
-
         echo "==> Backend synced:"
         grep "^version" pyproject.toml || true
-        grep "^__version__" src/__version__.py || true
         ;;
 
     frontend)
