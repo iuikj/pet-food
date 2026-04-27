@@ -14,6 +14,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from src.api.config import settings
 from src.db.redis import close_redis, test_redis_connection
 from src.db.session import close_db, test_connection
+from src.__version__ import __version__
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -66,7 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Pet Food Diet Plan Assistant API",
     description="Backend API for diet plan generation, meals, pets, tasks, and analysis.",
-    version="1.0.0",
+    version=__version__,
     docs_url="/docs" if settings.is_dev else None,
     redoc_url="/redoc" if settings.is_dev else None,
     openapi_url="/openapi.json" if settings.is_dev else None,
@@ -121,7 +122,7 @@ async def health_check():
     return {
         "code": 0,
         "message": "ok",
-        "data": {"status": "healthy", "version": "1.0.2"},
+        "data": {"status": "healthy", "version": __version__},
     }
 
 
@@ -134,7 +135,7 @@ async def health_check_detail():
         "message": "ok",
         "data": {
             "status": "healthy" if (db_status and redis_status) else "unhealthy",
-            "version": "1.0.3",
+            "version": __version__,
             "components": {
                 "database": {"status": "healthy" if db_status else "unhealthy"},
                 "redis": {"status": "healthy" if redis_status else "unhealthy"},

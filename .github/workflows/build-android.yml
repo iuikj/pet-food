@@ -24,6 +24,11 @@ jobs:
     environment: pet-food
 
     steps:
+      - name: Checkout backend repository (for scripts)
+        uses: actions/checkout@v4
+        with:
+          path: backend
+
       - name: Checkout frontend repository
         uses: actions/checkout@v4
         with:
@@ -31,6 +36,27 @@ jobs:
           ref: ${{ github.ref_name || inputs.version }}
           path: frontend
           token: ${{ secrets.FRONTEND_REPOSITORY_TOKEN != '' && secrets.FRONTEND_REPOSITORY_TOKEN || github.token }}
+
+      - name: Resolve version
+        id: version
+        run: |
+          RAW="${{ github.ref_name || inputs.version }}"
+          VERSION="${RAW#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+      - name: Compute Android version code
+        id: android_version
+        working-directory: backend
+        run: |
+          chmod +x scripts/sync-version.sh
+          ./scripts/sync-version.sh "${{ steps.version.outputs.version }}" android
+
+      - name: Sync frontend version
+        working-directory: frontend/web-app
+        run: |
+          chmod +x ../../backend/scripts/sync-version.sh
+          ../../backend/scripts/sync-version.sh "${{ steps.version.outputs.version }}" frontend
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -98,8 +124,10 @@ jobs:
         run: |
           echo "Gradle version:"
           ./gradlew --version
-          echo "Building Debug APK..."
-          ./gradlew assembleDebug
+          echo "Building Debug APK with version ${{ steps.version.outputs.version }}..."
+          ./gradlew assembleDebug \
+            -PappVersionName="${{ steps.version.outputs.version }}" \
+            -PappVersionCode="${{ steps.android_version.outputs.version_code }}"
 
       - name: Build Android APK (Release)
         if: startsWith(github.ref, 'refs/tags/')
@@ -111,8 +139,10 @@ jobs:
             echo "${{ secrets.ANDROID_KEYSTORE_FILE }}" | base64 -d > $(pwd)/petfood-release.keystore
             ls -lh petfood-release.keystore
 
-            echo "Building Release APK with injected signing config..."
+            echo "Building Release APK v${{ steps.version.outputs.version }} (code: ${{ steps.android_version.outputs.version_code }})..."
             ./gradlew assembleRelease \
+              -PappVersionName="${{ steps.version.outputs.version }}" \
+              -PappVersionCode="${{ steps.android_version.outputs.version_code }}" \
               -Pandroid.injected.signing.store.file=$(pwd)/petfood-release.keystore \
               -Pandroid.injected.signing.store.password='${{ secrets.ANDROID_KEYSTORE_PASSWORD }}' \
               -Pandroid.injected.signing.key.alias='${{ secrets.ANDROID_KEY_ALIAS }}' \
