@@ -105,17 +105,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         working-directory: frontend/web-app/android
         env:
-          KEYSTORE_FILE: ${{ secrets.ANDROID_KEYSTORE_FILE }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           # 如果有签名配置，构建 Release APK
-          if [ -n "$KEYSTORE_FILE" ]; then
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_FILE }}" ]; then
             echo "Creating keystore file..."
-            echo "$KEYSTORE_FILE" | base64 -d > petfood-release.keystore
+            echo "${{ secrets.ANDROID_KEYSTORE_FILE }}" | base64 -d > petfood-release.keystore
             ls -la petfood-release.keystore
-            echo "Building Release APK..."
+            echo "Building Release APK with signing..."
             ./gradlew assembleRelease
           else
             echo "⚠️ No keystore configured, skipping release build"
