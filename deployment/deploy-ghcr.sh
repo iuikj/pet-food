@@ -93,9 +93,13 @@ deploy_stack() {
     # 使用镜像地址拉取 API 镜像
     if [ "$USE_MIRROR" = "true" ]; then
         log "Pulling API image from mirror: $API_IMAGE_PULL"
-        docker pull "$API_IMAGE_PULL"
-        # 重新标记为原始镜像名
-        docker tag "$API_IMAGE_PULL" "$API_IMAGE"
+        if ! docker pull "$API_IMAGE_PULL"; then
+            log "Failed to pull from mirror, trying direct..."
+            docker pull "$API_IMAGE"
+        else
+            # 重新标记为原始镜像名
+            docker tag "$API_IMAGE_PULL" "$API_IMAGE"
+        fi
     else
         compose pull api
     fi
@@ -105,14 +109,19 @@ deploy_stack() {
         if [ "$USE_MIRROR" = "true" ]; then
             FRONTEND_IMAGE_MIRROR="${FRONTEND_IMAGE/ghcr.io/$MIRROR_REGISTRY}"
             log "Pulling frontend image from mirror: $FRONTEND_IMAGE_MIRROR"
-            docker pull "$FRONTEND_IMAGE_MIRROR"
-            docker tag "$FRONTEND_IMAGE_MIRROR" "$FRONTEND_IMAGE"
+            if ! docker pull "$FRONTEND_IMAGE_MIRROR"; then
+                log "Failed to pull from mirror, trying direct..."
+                docker pull "$FRONTEND_IMAGE"
+            else
+                docker tag "$FRONTEND_IMAGE_MIRROR" "$FRONTEND_IMAGE"
+            fi
         else
             compose pull frontend
         fi
     fi
 
-    compose up -d api frontend nginx
+    # 使用 --no-build 防止重新构建，--pull never 防止重新拉取
+    compose up -d --no-build --pull never api frontend nginx
 }
 
 rollback_to() {
