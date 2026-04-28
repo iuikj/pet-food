@@ -94,9 +94,9 @@ def _make_backend() -> CompositeBackend:
                 root_dir=str(_NOTEBOOKS_DIR),
                 virtual_mode=True,
             ),
-            "/memory_notes_store/":StoreBackend(
-                namespace=lambda ctx: (ctx.runtime.context.user_id,),
-            ),
+            # "/memory_notes_store/":StoreBackend(
+            #     namespace=lambda ctx: (ctx.runtime.context.user_id,),
+            # ),
             "/temp_notes/": StateBackend(),
         },
     )
@@ -116,7 +116,7 @@ plan_agent_with_sub = create_deep_agent(
     skills=["/skills/"],
     middleware=[plan_agent_prompt, trigger_plan_agent, plan_progress_middleware],
     context_schema=ContextV2,
-    store=AsyncPostgresStore()
+    # store=AsyncPostgresStore()
 )
 
 
