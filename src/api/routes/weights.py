@@ -29,7 +29,7 @@ async def record_weight(
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """记录宠物体重（同日覆盖），同时更新宠物当前体重"""
+    """记录宠物体重（每次新增），同时更新宠物当前体重"""
     try:
         service = WeightService(db)
         result = await service.record_weight(

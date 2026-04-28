@@ -248,11 +248,6 @@ class WeightRecord(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    # 同一宠物同一天只能有一条记录
-    __table_args__ = (
-        UniqueConstraint("pet_id", "recorded_date", name="uq_pet_recorded_date"),
-    )
-
     # 关系
     pet: Mapped["Pet"] = relationship("Pet", back_populates="weight_records")
 

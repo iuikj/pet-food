@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ContextV2:
+    user_id: Annotated[str, "用户ID"] = "Test"
     pet_information: Annotated[PetInformation, "宠物信息"] = None
     # ── 模型配置 ──
     plan_model: Annotated[str, "研究规划器模型"] = "dashscope:qwen3.5-plus"

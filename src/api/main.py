@@ -55,10 +55,40 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Infrastructure health check degraded")
 
+    # V2 LangGraph endpoint：在应用启动时初始化 checkpoint，并把编译后的图挂到路由。
+    from ag_ui_langgraph import add_langgraph_fastapi_endpoint
+    from copilotkit import LangGraphAGUIAgent
+    from src.agent.v2.graph import compile_v2_graph, open_v2_checkpointer
+
+    app.state.v2_checkpoint_pool = None
+
+    result = await open_v2_checkpointer()
+    if result is not None:
+        pool, checkpointer = result
+        app.state.v2_checkpoint_pool = pool
+    else:
+        checkpointer = None
+    app.state.v2_graph = compile_v2_graph(checkpointer=checkpointer)
+
+    has_langgraph_route = any(getattr(route, "path", None) == "/langgraph" for route in app.routes)
+    if not has_langgraph_route:
+        add_langgraph_fastapi_endpoint(
+            app=app,
+            agent=LangGraphAGUIAgent(
+                name="v2agent",
+                description="v2agent",
+                graph=app.state.v2_graph,
+            ),
+            path="/langgraph",
+        )
+        logger.info("LangGraph /langgraph endpoint ready")
+
     yield
 
     # 应用退出时统一关闭连接池。
     logger.info("Shutting down FastAPI application")
+    if app.state.v2_checkpoint_pool is not None:
+        await app.state.v2_checkpoint_pool.close()
     await close_db()
     await close_redis()
     logger.info("Shutdown complete")

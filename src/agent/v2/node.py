@@ -78,6 +78,8 @@ _V2_DIR = Path(__file__).resolve().parent
 _SKILLS_DIR = _V2_DIR / "files" / "skills"
 _NOTEBOOKS_DIR = _V2_DIR / "files" / "notebooks"
 
+from langgraph.store.postgres import AsyncPostgresStore
+from deepagents.backends.store import StoreBackend
 
 def _make_backend() -> CompositeBackend:
     """构建 CompositeBackend：skills / memory_notes 走文件系统，temp_notes 走 State。"""
@@ -91,6 +93,9 @@ def _make_backend() -> CompositeBackend:
             "/memory_notes/": FilesystemBackend(
                 root_dir=str(_NOTEBOOKS_DIR),
                 virtual_mode=True,
+            ),
+            "/memory_notes_store/":StoreBackend(
+                namespace=lambda ctx: (ctx.runtime.context.user_id,),
             ),
             "/temp_notes/": StateBackend(),
         },
@@ -111,6 +116,7 @@ plan_agent_with_sub = create_deep_agent(
     skills=["/skills/"],
     middleware=[plan_agent_prompt, trigger_plan_agent, plan_progress_middleware],
     context_schema=ContextV2,
+    store=AsyncPostgresStore()
 )
 
 

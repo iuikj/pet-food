@@ -39,12 +39,10 @@ dependencies = [
     "langchain-deepseek>=1.0.1",
     "langgraph>=1.0.10",
     "ipykernel>=7.2.0",
-    "annotated",
-    "note",
-    "awaitable",
-    "send",
-    "agentstate",
-    "runtime",
+    "ag-ui-langgraph>=0.0.34",
+    "copilotkit>=0.1.87",
+    "langgraph-checkpoint-postgres>=3.0.5",
+    "psycopg[binary]>=3.3.3",
 ]
 
 [dependency-groups]

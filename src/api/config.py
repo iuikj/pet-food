@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # ============ 数据库配置 ============
     database_url: str = Field(..., description="异步数据库连接字符串")
     database_echo: bool = Field(default=False, description="是否打印 SQL 语句")
+    langgraph_checkpoint_enabled: bool = Field(
+        default=True,
+        description="是否启用 LangGraph PostgreSQL checkpoint（复用 database_url）"
+    )
 
     # ============ Redis 配置 ============
     redis_url: str = Field(default="redis://localhost:6379/0", description="Redis 连接字符串")

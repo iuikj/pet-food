@@ -325,6 +325,40 @@ class TestWeightServiceDB:
         dates = [h["recorded_date"] for h in history]
         assert dates == sorted(dates, reverse=True)
 
+    async def test_same_day_records_are_all_kept(self, test_session, test_user, test_pet):
+        """同一天重复记录不应覆盖旧记录"""
+        from src.api.services.weight_service import WeightService
+
+        svc = WeightService(test_session)
+
+        first = await svc.record_weight(test_user.id, test_pet.id, 4.6)
+        second = await svc.record_weight(test_user.id, test_pet.id, 4.8)
+
+        history = await svc.get_weight_history(test_user.id, test_pet.id, days=30)
+        assert len(history) == 2
+        assert history[0]["id"] == second["id"]
+        assert history[1]["id"] == first["id"]
+
+    async def test_backfilled_weight_does_not_override_current_pet_weight(
+        self, test_session, test_user, test_pet
+    ):
+        """补录旧日期体重时，不应覆盖宠物当前体重"""
+        from src.api.services.weight_service import WeightService
+
+        svc = WeightService(test_session)
+        today = date.today()
+
+        await svc.record_weight(test_user.id, test_pet.id, 5.2, recorded_date=today)
+        await svc.record_weight(
+            test_user.id,
+            test_pet.id,
+            4.8,
+            recorded_date=today - timedelta(days=3),
+        )
+
+        await test_session.refresh(test_pet)
+        assert float(test_pet.weight) == 5.2
+
     async def test_record_weight_nonexistent_pet(self, test_session, test_user):
         """给不存在的宠物记录体重应抛出 ValueError"""
         from src.api.services.weight_service import WeightService

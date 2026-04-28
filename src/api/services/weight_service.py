@@ -8,7 +8,7 @@ from typing import Optional
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select, and_, desc, delete
+from sqlalchemy import select, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import WeightRecord, Pet
@@ -29,7 +29,7 @@ class WeightService:
         notes: Optional[str] = None,
     ) -> dict:
         """
-        记录体重（upsert: 同日覆盖）
+        记录体重（每次新增）
 
         同时更新 Pet.weight 为最新值。
 
@@ -49,33 +49,15 @@ class WeightService:
 
         target_date = recorded_date or date.today()
 
-        # 查找同日记录
-        result = await self.db.execute(
-            select(WeightRecord).where(
-                and_(
-                    WeightRecord.pet_id == pet_id,
-                    WeightRecord.recorded_date == target_date,
-                )
-            )
+        # 创建新记录
+        record = WeightRecord(
+            id=str(uuid.uuid4()),
+            pet_id=pet_id,
+            weight=weight,
+            recorded_date=target_date,
+            notes=notes,
         )
-        existing = result.scalars().first()
-
-        if existing:
-            # 更新已有记录
-            existing.weight = weight
-            if notes is not None:
-                existing.notes = notes
-            record = existing
-        else:
-            # 创建新记录
-            record = WeightRecord(
-                id=str(uuid.uuid4()),
-                pet_id=pet_id,
-                weight=weight,
-                recorded_date=target_date,
-                notes=notes,
-            )
-            self.db.add(record)
+        self.db.add(record)
 
         # 同步更新 Pet.weight
         pet.weight = weight

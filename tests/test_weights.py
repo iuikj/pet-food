@@ -1,6 +1,6 @@
 """
 体重记录 API 测试
-覆盖体重记录、历史查询、最新体重、删除、同日覆盖
+覆盖体重记录、历史查询、最新体重、删除、同日多条记录
 """
 import uuid
 from datetime import date, timedelta
@@ -49,24 +49,31 @@ class TestWeightRecord:
         assert response.status_code == 200
         assert response.json()["data"]["recorded_date"] == yesterday
 
-    async def test_record_weight_upsert(
+    async def test_record_weight_same_day_keeps_multiple_records(
         self, client: AsyncClient, auth_headers: dict, test_pet
     ):
-        """同日重复记录应覆盖（upsert）"""
-        # 第一次记录
-        await client.post(
+        """同日重复记录应保留多条历史"""
+        first = await client.post(
             "/api/v1/weights/",
             json={"pet_id": test_pet.id, "weight": 4.5},
             headers=auth_headers,
         )
-        # 第二次记录（同日应覆盖）
-        response = await client.post(
+        assert first.status_code == 200
+
+        second = await client.post(
             "/api/v1/weights/",
             json={"pet_id": test_pet.id, "weight": 4.7},
             headers=auth_headers,
         )
-        assert response.status_code == 200
-        assert response.json()["data"]["weight"] == 4.7
+        assert second.status_code == 200
+        assert second.json()["data"]["weight"] == 4.7
+
+        history = await client.get(
+            f"/api/v1/weights/history?pet_id={test_pet.id}",
+            headers=auth_headers,
+        )
+        assert history.status_code == 200
+        assert len(history.json()["data"]) == 2
 
     async def test_record_weight_invalid_pet(
         self, client: AsyncClient, auth_headers: dict
@@ -166,6 +173,28 @@ class TestWeightLatest:
         data = response.json()
         assert data["code"] == 0
         assert data["data"]["weight"] == 4.5
+
+    async def test_get_latest_weight_prefers_latest_created_same_day(
+        self, client: AsyncClient, auth_headers: dict, test_pet
+    ):
+        """同一天多次记录时，最新体重应返回最后一次创建的记录"""
+        await client.post(
+            "/api/v1/weights/",
+            json={"pet_id": test_pet.id, "weight": 4.5},
+            headers=auth_headers,
+        )
+        await client.post(
+            "/api/v1/weights/",
+            json={"pet_id": test_pet.id, "weight": 4.9},
+            headers=auth_headers,
+        )
+
+        response = await client.get(
+            f"/api/v1/weights/latest?pet_id={test_pet.id}",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["weight"] == 4.9
 
     async def test_get_latest_weight_no_records(
         self, client: AsyncClient, auth_headers: dict, test_pet
