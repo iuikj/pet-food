@@ -142,12 +142,14 @@ jobs:
 
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
+        env:
+          DEFAULT_API_URL: http://${{ secrets.SERVER_HOST || '81.71.128.32' }}/api/v1
         with:
           context: ./frontend/web-app
           file: ./frontend/web-app/Dockerfile
           push: true
           build-args: |
-            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || format('http://{0}/api/v1', secrets.SERVER_HOST) }}
+            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || env.DEFAULT_API_URL }}
             VITE_ENABLE_SSE=${{ vars.VITE_ENABLE_SSE || 'true' }}
             VITE_RECONNECT_DELAY=${{ vars.VITE_RECONNECT_DELAY || '3000' }}
           tags: |
