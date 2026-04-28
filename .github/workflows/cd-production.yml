@@ -147,7 +147,7 @@ jobs:
           file: ./frontend/web-app/Dockerfile
           push: true
           build-args: |
-            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || 'http://localhost/api/v1' }}
+            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || format('http://{0}/api/v1', secrets.SERVER_HOST) }}
             VITE_ENABLE_SSE=${{ vars.VITE_ENABLE_SSE || 'true' }}
             VITE_RECONNECT_DELAY=${{ vars.VITE_RECONNECT_DELAY || '3000' }}
           tags: |

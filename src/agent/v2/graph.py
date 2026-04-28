@@ -109,7 +109,15 @@ async def open_v2_checkpointer() -> tuple[AsyncConnectionPool, AsyncPostgresSave
         await pool.open()
 
         checkpointer = AsyncPostgresSaver(pool)
-        await checkpointer.setup()
+        try:
+            await checkpointer.setup()
+        except Exception as setup_exc:
+            # 多 worker 并发建表时，第二个进程可能遇到 UniqueViolation（表/类型已存在）
+            # 这是正常的，静默忽略即可（setup() 内部已有 IF NOT EXISTS，但 CREATE TYPE 仍会冲突）
+            if "already exists" in str(setup_exc).lower():
+                logger.debug("V2 checkpoint 表已存在（多 worker 并发建表，忽略）：%s", setup_exc)
+            else:
+                raise
 
         logger.info("V2 PostgreSQL checkpoint 已启用")
         return pool, checkpointer
