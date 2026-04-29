@@ -8,7 +8,7 @@ from typing import Optional
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select, desc, delete
+from sqlalchemy import and_, select, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.models import WeightRecord, Pet
@@ -31,7 +31,7 @@ class WeightService:
         """
         记录体重（每次新增）
 
-        同时更新 Pet.weight 为最新值。
+        仅当记录属于最新日期时同步更新 Pet.weight。
 
         Args:
             user_id: 用户 ID
@@ -48,6 +48,7 @@ class WeightService:
             raise ValueError("宠物不存在")
 
         target_date = recorded_date or date.today()
+        has_later_record = await self._has_later_record(pet_id, target_date)
 
         # 创建新记录
         record = WeightRecord(
@@ -59,8 +60,9 @@ class WeightService:
         )
         self.db.add(record)
 
-        # 同步更新 Pet.weight
-        pet.weight = weight
+        # 只有当前记录不早于已有最新记录时，才更新宠物当前体重。
+        if not has_later_record:
+            pet.weight = weight
 
         await self.db.commit()
         await self.db.refresh(record)
@@ -96,7 +98,11 @@ class WeightService:
                     WeightRecord.pet_id == pet_id,
                     WeightRecord.recorded_date >= start_date,
                 )
-            ).order_by(desc(WeightRecord.recorded_date))
+            ).order_by(
+                desc(WeightRecord.recorded_date),
+                desc(WeightRecord.created_at),
+                desc(WeightRecord.id),
+            )
         )
         records = result.scalars().all()
 
@@ -124,7 +130,11 @@ class WeightService:
         result = await self.db.execute(
             select(WeightRecord).where(
                 WeightRecord.pet_id == pet_id,
-            ).order_by(desc(WeightRecord.recorded_date)).limit(1)
+            ).order_by(
+                desc(WeightRecord.recorded_date),
+                desc(WeightRecord.created_at),
+                desc(WeightRecord.id),
+            ).limit(1)
         )
         record = result.scalars().first()
 
@@ -152,21 +162,25 @@ class WeightService:
             ValueError: 记录不存在
         """
         result = await self.db.execute(
-            select(WeightRecord).join(Pet).where(
+            select(WeightRecord, Pet).join(Pet).where(
                 and_(
                     WeightRecord.id == record_id,
                     Pet.user_id == user_id,
                 )
             )
         )
-        record = result.scalars().first()
+        row = result.first()
 
-        if not record:
+        if not row:
             raise ValueError("体重记录不存在")
+        record, pet = row
 
         await self.db.execute(
             delete(WeightRecord).where(WeightRecord.id == record_id)
         )
+        latest_remaining = await self._get_latest_record(record.pet_id)
+        if latest_remaining is not None:
+            pet.weight = latest_remaining.weight
         await self.db.commit()
         return record_id
 
@@ -182,6 +196,31 @@ class WeightService:
             )
         )
         return result.scalar_one_or_none()
+
+    async def _has_later_record(self, pet_id: str, target_date: date) -> bool:
+        """判断是否已存在更晚日期的体重记录。"""
+        result = await self.db.execute(
+            select(WeightRecord.id).where(
+                and_(
+                    WeightRecord.pet_id == pet_id,
+                    WeightRecord.recorded_date > target_date,
+                )
+            ).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def _get_latest_record(self, pet_id: str) -> Optional[WeightRecord]:
+        """按记录日期和创建时间获取最新一条体重记录。"""
+        result = await self.db.execute(
+            select(WeightRecord).where(
+                WeightRecord.pet_id == pet_id,
+            ).order_by(
+                desc(WeightRecord.recorded_date),
+                desc(WeightRecord.created_at),
+                desc(WeightRecord.id),
+            ).limit(1)
+        )
+        return result.scalars().first()
 
     @staticmethod
     def _to_dict(record: WeightRecord) -> dict:
