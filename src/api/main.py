@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
 
     # V2 LangGraph endpoint：在应用启动时初始化 checkpoint，并把编译后的图挂到路由。
     from ag_ui_langgraph import add_langgraph_fastapi_endpoint
-    from copilotkit import LangGraphAGUIAgent
+    from src.api.agui_agent import DataclassAwareLangGraphAGUIAgent
     from src.agent.v2.graph import compile_v2_graph, open_v2_checkpointer
 
     app.state.diet_plan_agent_version = settings.diet_plan_agent_version
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
     if not has_langgraph_route:
         add_langgraph_fastapi_endpoint(
             app=app,
-            agent=LangGraphAGUIAgent(
+            agent=DataclassAwareLangGraphAGUIAgent(
                 name="v2agent",
                 description="v2agent",
                 graph=app.state.v2_graph,

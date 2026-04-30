@@ -305,7 +305,6 @@ v1 默认模型: `dashscope:qwen3.5-plus` (规划/周计划/报告), `dashscope:
 - Web: `fastapi`, `uvicorn`, `python-multipart`
 - DB: `sqlalchemy[asyncio]`, `asyncpg`, `alembic`, `redis`
 - 认证: `python-jose[cryptography]`, `bcrypt`
-- AG-UI (已安装，集成开发中): `ag-ui-langgraph>=0.0.25`, `copilotkit>=0.1.78`
 
 ---
 
