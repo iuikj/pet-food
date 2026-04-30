@@ -129,9 +129,9 @@ async def register(
     """
     用户注册
 
-    - **username**: 用户名（3-50字符，只能包含字母、数字、下划线和连字符）
+    - **username**: 用户名（3-50字符，可包含中文、字母、数字、下划线和连字符）
     - **email**: 邮箱地址
-    - **password**: 密码（6-72 字符）
+    - **password**: 密码（至少 6 个字符，最多 72 字节 UTF-8）
     """
     try:
         auth_service = AuthService(db)
@@ -177,7 +177,7 @@ async def login(
     用户登录
 
     - **username**: 用户名或邮箱
-    - **password**: 密码（6-72 字符）
+    - **password**: 密码
     """
     try:
         auth_service = AuthService(db)

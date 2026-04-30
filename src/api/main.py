@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting FastAPI application")
     logger.info("  environment: %s", "development" if settings.is_dev else "production")
     logger.info("  bind: http://%s:%s", settings.api_host, settings.api_port)
+    logger.info("  diet plan agent version: %s", settings.diet_plan_agent_version)
     logger.info("=" * 60)
 
     db_ok = await test_connection()
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
     from copilotkit import LangGraphAGUIAgent
     from src.agent.v2.graph import compile_v2_graph, open_v2_checkpointer
 
+    app.state.diet_plan_agent_version = settings.diet_plan_agent_version
     app.state.v2_checkpoint_pool = None
 
     result = await open_v2_checkpointer()

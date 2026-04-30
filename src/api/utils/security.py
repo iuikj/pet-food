@@ -16,11 +16,12 @@ _BCRYPT_MAX_PASSWORD_BYTES = 72
 
 def _hash_password_sync(password: str) -> str:
     """bcrypt 哈希的同步实现（内部使用，勿在 async 路径直接调用）。"""
-    if len(password) > _BCRYPT_MAX_PASSWORD_BYTES:
-        password = password[:_BCRYPT_MAX_PASSWORD_BYTES]
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > _BCRYPT_MAX_PASSWORD_BYTES:
+        raise ValueError("密码最多支持 72 字节（UTF-8）")
 
     salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
+    hashed = bcrypt.hashpw(password_bytes, salt)
     return hashed.decode("utf-8")
 
 

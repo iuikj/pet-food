@@ -4,7 +4,7 @@ Diet plan routes.
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,12 +57,13 @@ async def _resolve_pet_info(
 
 @router.post("/", response_model=ApiResponse[CreateTaskResponse], summary="创建饮食计划")
 async def create_diet_plan(
+    http_request: Request,
     request: CreatePlanRequest,
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
-        plan_service = PlanService(db)
+        plan_service = PlanService(db, app_state=http_request.app.state)
         pet_info = await _resolve_pet_info(plan_service, request, current_user_id)
         result = await plan_service.create_diet_plan(
             user_id=current_user_id,
@@ -91,12 +92,13 @@ async def create_diet_plan(
 
 @router.post("/stream", summary="创建饮食计划（流式）")
 async def create_diet_plan_stream(
+    http_request: Request,
     request: CreatePlanRequest,
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
-        plan_service = PlanService(db)
+        plan_service = PlanService(db, app_state=http_request.app.state)
         pet_info = await _resolve_pet_info(plan_service, request, current_user_id)
 
         return StreamingResponse(
@@ -124,11 +126,12 @@ async def create_diet_plan_stream(
 
 @router.get("/stream", summary="恢复流式连接")
 async def resume_diet_plan_stream(
+    http_request: Request,
     task_id: str = Query(..., description="任务 ID"),
     current_user_id: str = Depends(get_current_user),
 ):
     try:
-        plan_service = PlanService(None)
+        plan_service = PlanService(None, app_state=http_request.app.state)
         return StreamingResponse(
             plan_service.resume_diet_plan_stream(
                 user_id=current_user_id,
@@ -150,12 +153,13 @@ async def resume_diet_plan_stream(
 
 @router.post("/{plan_id}/confirm", response_model=ApiResponse[dict], summary="确认保存饮食计划")
 async def confirm_diet_plan(
+    http_request: Request,
     plan_id: str,
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
-        service = PlanService(db)
+        service = PlanService(db, app_state=http_request.app.state)
         saved_id = await service.confirm_diet_plan(plan_id, current_user_id)
         return ApiResponse(
             code=0,
@@ -173,13 +177,14 @@ async def confirm_diet_plan(
 
 @router.post("/{plan_id}/apply", response_model=ApiResponse[dict], summary="应用饮食计划")
 async def apply_diet_plan(
+    http_request: Request,
     plan_id: str,
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """应用饮食计划：停用旧计划 → 激活新计划 → 从今天起生成 MealRecords"""
     try:
-        service = PlanService(db)
+        service = PlanService(db, app_state=http_request.app.state)
         result = await service.apply_diet_plan(
             plan_id=plan_id,
             user_id=current_user_id,
@@ -200,6 +205,7 @@ async def apply_diet_plan(
 
 @router.get("/", response_model=ApiResponse[DietPlanListResponse], summary="获取饮食计划列表")
 async def list_diet_plans(
+    http_request: Request,
     pet_type: PetType | None = Query(None, description="宠物类型筛选"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(10, ge=1, le=100, description="每页大小"),
@@ -207,7 +213,7 @@ async def list_diet_plans(
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
-        plan_service = PlanService(db)
+        plan_service = PlanService(db, app_state=http_request.app.state)
         result = await plan_service.list_diet_plans(
             user_id=current_user_id,
             pet_type=pet_type.value if pet_type else None,
@@ -230,12 +236,13 @@ async def list_diet_plans(
 
 @router.get("/{plan_id}", response_model=ApiResponse[DietPlanDetailResponse], summary="获取饮食计划详情")
 async def get_diet_plan(
+    http_request: Request,
     plan_id: str,
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
-        plan_service = PlanService(db)
+        plan_service = PlanService(db, app_state=http_request.app.state)
         result = await plan_service.get_diet_plan_detail(
             plan_id=plan_id,
             user_id=current_user_id,
@@ -256,12 +263,13 @@ async def get_diet_plan(
 
 @router.delete("/{plan_id}", response_model=ApiResponse[dict], summary="删除饮食计划")
 async def delete_diet_plan(
+    http_request: Request,
     plan_id: str,
     current_user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
-        plan_service = PlanService(db)
+        plan_service = PlanService(db, app_state=http_request.app.state)
         deleted_plan_id = await plan_service.delete_diet_plan(
             plan_id=plan_id,
             user_id=current_user_id,

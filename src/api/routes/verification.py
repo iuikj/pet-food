@@ -5,6 +5,7 @@
 from typing import Optional
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 
@@ -282,9 +283,9 @@ async def register_with_code(
     """
     使用验证码注册
 
-    - **username**: 用户名（3-50字符，只能包含字母、数字、下划线和连字符）
+    - **username**: 用户名（3-50字符，可包含中文、字母、数字、下划线和连字符）
     - **email**: 邮箱地址
-    - **password**: 密码（6-72 字符）
+    - **password**: 密码（至少 6 个字符，最多 72 字节 UTF-8）
     - **code**: 验证码
     """
     try:
@@ -339,11 +340,10 @@ async def send_password_reset_code(
     """
     try:
         # 检查邮箱是否已注册
-        from sqlalchemy import select
         from src.db.models import User
 
         result = await db.execute(
-            select(User).where(User.email == request.email)
+            select(User).where(func.lower(User.email) == request.email)
         )
         user = result.scalars().first()
 
@@ -412,7 +412,7 @@ async def reset_password(
 
     - **email**: 邮箱地址
     - **code**: 验证码
-    - **new_password**: 新密码（6-72 字符）
+    - **new_password**: 新密码（至少 6 个字符，最多 72 字节 UTF-8）
     """
     try:
         # 重置密码
@@ -455,7 +455,7 @@ async def change_password(
     修改密码（需登录）
 
     - **old_password**: 旧密码
-    - **new_password**: 新密码（6-72 字符）
+    - **new_password**: 新密码（至少 6 个字符，最多 72 字节 UTF-8）
 
     需要在请求头中携带有效的访问令牌：
     - **Authorization**: Bearer {access_token}

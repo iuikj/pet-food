@@ -3,7 +3,7 @@ FastAPI 应用配置
 使用 Pydantic Settings 管理环境变量
 """
 import os
-from typing import List
+from typing import List, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 from pathlib import Path
@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # ============ 任务配置 ============
     task_timeout_seconds: int = Field(default=3600, description="任务超时时间（秒）")
     task_max_concurrent: int = Field(default=5, description="最大并发任务数")
+    diet_plan_agent_version: Literal["v1", "v2"] = Field(
+        default="v2",
+        description="饮食计划 API 使用的 agent 图版本",
+    )
 
     # ============ 速率限制配置 ============
     rate_limit_enabled: bool = Field(default=True, description="是否启用速率限制")

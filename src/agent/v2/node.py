@@ -321,10 +321,19 @@ async def gather_and_structure(state: State):
         ai_suggestions=ai_suggestions,
     )
 
+    serialized_plans = [
+        plan.model_dump() if hasattr(plan, "model_dump") else plan
+        for plan in weekly_plans
+    ]
+
     emit_progress(
         ProgressEventType.COMPLETED,
         "月度饮食计划全部生成完成",
         node="gather_and_structure",
+        detail={
+            "plans": serialized_plans,
+            "ai_suggestions": ai_suggestions,
+        },
         progress=100,
     )
 

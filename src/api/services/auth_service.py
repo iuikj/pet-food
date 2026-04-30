@@ -5,7 +5,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from fastapi import HTTPException, status
 
 from src.db.models import User, RefreshToken
@@ -73,7 +73,7 @@ class AuthService:
 
         # 检查邮箱是否已存在
         result = await self.db.execute(
-            select(User).where(User.email == email)
+            select(User).where(func.lower(User.email) == email)
         )
         if result.scalars().first():
             raise DuplicateException("邮箱已被注册")
@@ -123,11 +123,13 @@ class AuthService:
             NotFoundException: 用户不存在
         """
         # 查找用户（支持用户名或邮箱登录）
-        result = await self.db.execute(
-            select(User).where(
-                (User.username == username) | (User.email == username)
+        normalized_email = username.lower() if "@" in username else None
+        query = select(User).where(User.username == username)
+        if normalized_email:
+            query = select(User).where(
+                (User.username == username) | (func.lower(User.email) == normalized_email)
             )
-        )
+        result = await self.db.execute(query)
         user = result.scalars().first()
 
         if not user:
@@ -341,7 +343,7 @@ class AuthService:
 
         # 查找用户
         result = await self.db.execute(
-            select(User).where(User.email == email)
+            select(User).where(func.lower(User.email) == email)
         )
         user = result.scalars().first()
 

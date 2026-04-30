@@ -1,11 +1,15 @@
 """
 饮食计划服务
-调用 LangGraph V1 多智能体系统生成宠物饮食计划
+调用 LangGraph 多智能体系统生成宠物饮食计划。
+
+实际使用的 agent 图版本由 `settings.diet_plan_agent_version` 控制：
+- `v1`：旧版图
+- `v2`：新版 deep-agent 图
 """
 import json
 import asyncio
 import logging
-from typing import Dict, Any, AsyncGenerator, TYPE_CHECKING
+from typing import Dict, Any, AsyncGenerator, TYPE_CHECKING, Literal
 from datetime import datetime, timezone, date
 import uuid
 
@@ -29,6 +33,7 @@ from src.api.models.response import (
     DietPlanSummaryResponse,
     PetType as ResponsePetType,
 )
+from src.api.config import settings
 from src.api.utils.stream import create_sse_event, stream_with_heartbeat
 from src.utils.strtuct import PetInformation
 
@@ -58,8 +63,9 @@ def _spawn_background_task(coro) -> asyncio.Task:
 class PlanService:
     """饮食计划服务类"""
 
-    def __init__(self, db: AsyncSession | None):
+    def __init__(self, db: AsyncSession | None, *, app_state: Any | None = None):
         self.db = db
+        self.app_state = app_state
         self.task_service = TaskService(db) if db else None
         self.pet_service = PetService(db) if db else None
 
@@ -396,7 +402,10 @@ class PlanService:
 
                 await task_service.update_task_status(task_id, "running")
 
-                inputs, context = self._prepare_inputs(pet_info)
+                inputs, context = self._prepare_inputs(
+                    pet_info,
+                    user_id=user_id,
+                )
 
                 async for namespace, mode, chunk in graph.astream(
                     input=inputs,
@@ -541,33 +550,49 @@ class PlanService:
 
     # ──────────── 内部方法 ────────────
 
-    @staticmethod
-    async def _build_graph() -> "CompiledStateGraph":
-        """构建 V1 LangGraph 图"""
+    def _get_agent_version(self) -> Literal["v1", "v2"]:
+        return settings.diet_plan_agent_version
+
+    async def _build_graph(self) -> "CompiledStateGraph":
+        """按配置返回当前饮食计划图。"""
+        agent_version = self._get_agent_version()
+
+        if agent_version == "v2":
+            if self.app_state is not None:
+                graph = getattr(self.app_state, "v2_graph", None)
+                if graph is not None:
+                    return graph
+
+            from src.agent.v2.graph import graph as v2_graph
+
+            return v2_graph
+
         # 延迟导入：只有真正触发计划生成时才加载 agent/v1 + langgraph 栈，
         # 避免冷启动成本分摊到不调用 LLM 的路径（登录、宠物 CRUD 等）。
         from src.agent.v1.graph import build_v1_graph
 
         return await build_v1_graph()
 
-    @staticmethod
-    def _prepare_inputs(pet_info: Dict[str, Any]) -> tuple:
-        """
-        准备 V1 图的输入数据和上下文
-
-        Args:
-            pet_info: 宠物信息字典
-
-        Returns:
-            (inputs, context) 元组
-        """
-        from src.agent.v1.utils.context import ContextV1
-
+    def _prepare_inputs(self, pet_info: Dict[str, Any], *, user_id: str | None = None) -> tuple:
+        """按配置准备图的输入数据和上下文。"""
         pet_info_filtered = {
             k: v for k, v in pet_info.items()
             if k in PetInformation.model_fields
         }
         pet_information = PetInformation(**pet_info_filtered)
+
+        if self._get_agent_version() == "v2":
+            from src.agent.v2.utils.context import ContextV2
+
+            return {
+                "pet_information": pet_information,
+            }, ContextV2(
+                user_id=user_id or "anonymous",
+                pet_information=pet_information,
+            )
+
+        from src.agent.v1.utils.context import ContextV1
+
         return {"pet_information": pet_information}, ContextV1()
 
     async def _execute_task_async(self, task_id: str, pet_info: Dict[str, Any]):
@@ -587,9 +612,12 @@ class PlanService:
                 graph = await self._build_graph()
                 config = {"configurable": {"thread_id": task_id}}
 
-                await task_service.update_task_status(task_id, "running")
+                running_task = await task_service.update_task_status(task_id, "running")
 
-                inputs, context = self._prepare_inputs(pet_info)
+                inputs, context = self._prepare_inputs(
+                    pet_info,
+                    user_id=running_task.user_id,
+                )
                 result = await graph.ainvoke(inputs, config, context=context)
 
                 completed_task = await task_service.complete_task(task_id, result)

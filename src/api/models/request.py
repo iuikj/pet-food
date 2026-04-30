@@ -2,10 +2,41 @@
 请求模型（Pydantic）
 定义 API 请求的数据结构
 """
+import re
 from typing import List, Optional
 from enum import Enum
 from pydantic import BaseModel, Field, EmailStr, field_validator
 from src.utils.strtuct import PetInformation
+
+
+_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_\-\u4e00-\u9fff]+$")
+_MAX_PASSWORD_BYTES = 72
+
+
+def _normalize_and_validate_username(value: str) -> str:
+    """规范化并校验用户名。"""
+    normalized = value.strip()
+
+    if len(normalized) < 3 or len(normalized) > 50:
+        raise ValueError("用户名长度需为 3-50 个字符")
+
+    if not _USERNAME_PATTERN.fullmatch(normalized):
+        raise ValueError("用户名只能包含中文、字母、数字、下划线和连字符")
+
+    return normalized
+
+
+def _normalize_email(value: EmailStr | str) -> str:
+    """统一邮箱格式，避免大小写和首尾空格带来的歧义。"""
+    return str(value).strip().lower()
+
+
+def _validate_password(value: str) -> str:
+    """校验密码长度，避免 bcrypt 静默截断。"""
+    password_bytes = len(value.encode("utf-8"))
+    if password_bytes > _MAX_PASSWORD_BYTES:
+        raise ValueError("密码最多支持 72 字节（UTF-8）")
+    return value
 
 
 # ==================== 枚举定义 ====================
@@ -50,21 +81,37 @@ class RegisterRequest(BaseModel):
     """用户注册请求"""
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
     email: EmailStr = Field(..., description="邮箱地址")
-    password: str = Field(..., min_length=6, max_length=100, description="密码")
+    password: str = Field(..., min_length=6, description="密码（至少 6 个字符，最多 72 字节 UTF-8）")
 
     @field_validator('username')
     @classmethod
     def validate_username(cls, v: str) -> str:
         """验证用户名格式"""
-        if not v.replace('_', '').replace('-', '').isalnum():
-            raise ValueError('用户名只能包含字母、数字、下划线和连字符')
-        return v
+        return _normalize_and_validate_username(v)
+
+    @field_validator('email')
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        """统一邮箱格式。"""
+        return _normalize_email(v)
+
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        """验证密码字节长度。"""
+        return _validate_password(v)
 
 
 class LoginRequest(BaseModel):
     """用户登录请求"""
     username: str = Field(..., description="用户名或邮箱")
     password: str = Field(..., description="密码")
+
+    @field_validator('username')
+    @classmethod
+    def normalize_username(cls, v: str) -> str:
+        """登录标识统一去掉首尾空格。"""
+        return v.strip()
 
 
 class RefreshTokenRequest(BaseModel):
@@ -114,6 +161,12 @@ class SendCodeRequest(BaseModel):
     email: EmailStr = Field(..., description="邮箱地址")
     code_type: CodeType = Field(..., description="验证码类型")
 
+    @field_validator('email')
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        """统一邮箱格式。"""
+        return _normalize_email(v)
+
 
 class VerifyCodeRequest(BaseModel):
     """验证验证码请求"""
@@ -121,34 +174,68 @@ class VerifyCodeRequest(BaseModel):
     code: str = Field(..., min_length=6, max_length=6, pattern=r'^\d{6}$', description="6位数字验证码")
     code_type: CodeType = Field(..., description="验证码类型")
 
+    @field_validator('email')
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        """统一邮箱格式。"""
+        return _normalize_email(v)
+
 
 class RegisterWithCodeRequest(BaseModel):
     """使用验证码注册请求"""
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
     email: EmailStr = Field(..., description="邮箱地址")
-    password: str = Field(..., min_length=6, max_length=100, description="密码")
+    password: str = Field(..., min_length=6, description="密码（至少 6 个字符，最多 72 字节 UTF-8）")
     code: str = Field(..., min_length=6, max_length=6, pattern=r'^\d{6}$', description="6位数字验证码")
 
     @field_validator('username')
     @classmethod
     def validate_username(cls, v: str) -> str:
         """验证用户名格式"""
-        if not v.replace('_', '').replace('-', '').isalnum():
-            raise ValueError('用户名只能包含字母、数字、下划线和连字符')
-        return v
+        return _normalize_and_validate_username(v)
+
+    @field_validator('email')
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        """统一邮箱格式。"""
+        return _normalize_email(v)
+
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        """验证密码字节长度。"""
+        return _validate_password(v)
 
 
 class ResetPasswordRequest(BaseModel):
     """重置密码请求"""
     email: EmailStr = Field(..., description="邮箱地址")
     code: str = Field(..., min_length=6, max_length=6, pattern=r'^\d{6}$', description="6位数字验证码")
-    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
+    new_password: str = Field(..., min_length=6, description="新密码（至少 6 个字符，最多 72 字节 UTF-8）")
+
+    @field_validator('email')
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        """统一邮箱格式。"""
+        return _normalize_email(v)
+
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        """验证新密码字节长度。"""
+        return _validate_password(v)
 
 
 class ChangePasswordRequest(BaseModel):
     """修改密码请求（需登录）"""
     old_password: str = Field(..., description="旧密码")
-    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
+    new_password: str = Field(..., min_length=6, description="新密码（至少 6 个字符，最多 72 字节 UTF-8）")
+
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        """验证新密码字节长度。"""
+        return _validate_password(v)
 
 
 # ==================== 宠物管理相关请求 ====================
