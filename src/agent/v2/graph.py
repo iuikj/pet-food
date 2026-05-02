@@ -58,7 +58,7 @@ def compile_v2_graph(*, checkpointer: Any = None):
         config = {"configurable": {"thread_id": "<plan_id>"}}
         await graph.ainvoke(input, config, durability="exit")
     """
-    return _build_graph_definition().compile(checkpointer=checkpointer)
+    return _build_graph_definition().compile(checkpointer=checkpointer).with_config(recursion_limit=1000)
 
 
 def _resolve_postgres_dsn() -> str | None:

@@ -33,7 +33,15 @@ from langgraph.config import get_config
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
-from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.stream_events import (
+    ProgressEventType,
+    emit_progress,
+    emit_ai_message,
+    emit_tool_call,
+    emit_plan_snapshot,
+    emit_subagent_spawn,
+    extract_reasoning,
+)
 
 _SEARCH_TOOL_NAMES = {
     "ingredient_search_tool",
@@ -137,6 +145,77 @@ def _extract_tool_call_names(messages: Sequence[Any]) -> list[str]:
             if name:
                 names.append(str(name))
     return names
+
+
+def _extract_result_content(result: Any) -> Any:
+    """从 ToolMessage / Command / 原始返回值抽 result content,供 emit_tool_call 使用。"""
+    if isinstance(result, ToolMessage):
+        return result.content
+    if hasattr(result, "content"):
+        return result.content
+    return result
+
+
+def _emit_genui_after_model_call(
+    response: ModelResponse[Any],
+    *,
+    node: str,
+    task_name: str | None = None,
+) -> None:
+    """v2 GenUI 适配:在 awrap_model_call 拿到 response 后发 ai_message/plan/subagent 三类事件。"""
+    last_ai = _last_ai_message(response.result)
+    if last_ai is None:
+        return
+
+    content, reasoning = extract_reasoning(last_ai)
+    if content or reasoning:
+        emit_ai_message(
+            node=node,
+            content=content or "",
+            reasoning=reasoning,
+            message_id=getattr(last_ai, "id", None),
+            task_name=task_name,
+        )
+
+    tool_calls = getattr(last_ai, "tool_calls", None) or []
+    for call in tool_calls:
+        if not isinstance(call, Mapping):
+            continue
+        call_name = str(call.get("name") or "")
+        call_args = call.get("args") or {}
+        if not isinstance(call_args, Mapping):
+            call_args = {}
+
+        # plan/todos 工具调用 → plan_snapshot
+        if call_name in ("write_todos", "update_todos", "TodoWrite"):
+            todos = call_args.get("todos") or call_args.get("plan") or []
+            if todos:
+                emit_plan_snapshot(
+                    node=node,
+                    plan=list(todos),
+                    action="updated" if call_name == "update_todos" else "created",
+                )
+            continue
+
+        # subagent 调用 → subagent_spawn (deepagents task 工具 / 业务 transfor_task_to_subagent)
+        lname = call_name.lower()
+        if call_name == "task" or "subagent" in lname or "transfor" in lname:
+            sub_name = (
+                call_args.get("subagent_type")
+                or call_args.get("agent_name")
+                or call_name
+            )
+            task_desc = (
+                call_args.get("description")
+                or call_args.get("content")
+                or call_args.get("task_name")
+                or ""
+            )
+            emit_subagent_spawn(
+                node=node,
+                target=str(sub_name),
+                task_name=str(task_desc),
+            )
 
 
 def _safe_run_key() -> str:
@@ -293,7 +372,7 @@ class PlanProgressMiddleware(_TrackedProgressMiddleware):
             if changed:
                 emit_progress(
                     ProgressEventType.RESEARCH_TASK_DELEGATING,
-                    f"正在委派 {len(tool_names)} 个调研动作：{', '.join(tool_names)}",
+                    f"正在委派 {len(tool_names)} 个调研动作:{', '.join(tool_names)}",
                     node="plan_agent",
                     detail={"tool_names": tool_names},
                     progress=progress,
@@ -304,12 +383,62 @@ class PlanProgressMiddleware(_TrackedProgressMiddleware):
             if changed:
                 emit_progress(
                     ProgressEventType.PLAN_UPDATED,
-                    "研究结果正在收束，准备生成协调指南",
+                    "研究结果正在收束,准备生成协调指南",
                     node="plan_agent",
                     progress=progress,
                 )
 
+        # v2 GenUI: ai_message + plan_snapshot + subagent_spawn 细粒度事件
+        _emit_genui_after_model_call(
+            response,
+            node="plan_agent",
+            task_name=None,
+        )
+
         return response
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler,
+    ) -> ToolMessage | Command[Any]:
+        tool_call = request.tool_call or {}
+        tool_name = str(tool_call.get("name") or "")
+        tool_args = tool_call.get("args") or {}
+        if not isinstance(tool_args, Mapping):
+            tool_args = {}
+        call_id = tool_call.get("id") or f"{tool_name}_plan_agent"
+
+        emit_tool_call(
+            node="plan_agent",
+            tool_name=tool_name,
+            args=dict(tool_args),
+            status="started",
+            call_id=call_id,
+        )
+
+        try:
+            result = await handler(request)
+        except Exception as exc:
+            emit_tool_call(
+                node="plan_agent",
+                tool_name=tool_name,
+                args=dict(tool_args),
+                status="error",
+                result=str(exc),
+                call_id=call_id,
+            )
+            raise
+
+        emit_tool_call(
+            node="plan_agent",
+            tool_name=tool_name,
+            args=dict(tool_args),
+            status="completed",
+            result=_extract_result_content(result),
+            call_id=call_id,
+        )
+        return result
 
     def after_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
         _, progress, changed = self._update_unit("plan", stage=1.0)
@@ -463,6 +592,13 @@ class WeekProgressMiddleware(_TrackedProgressMiddleware):
             )
             raise
 
+        # v2 GenUI: ai_message + plan_snapshot + subagent_spawn 细粒度事件
+        _emit_genui_after_model_call(
+            response,
+            node=self._node_name(week_number),
+            task_name=self._task_name(week_number),
+        )
+
         tool_names = _extract_tool_call_names(response.result)
         business_tool_names = [name for name in tool_names if name in _WEEK_TOOL_NAMES]
         if business_tool_names:
@@ -496,6 +632,7 @@ class WeekProgressMiddleware(_TrackedProgressMiddleware):
         tool_args = tool_call.get("args") or {}
         if not isinstance(tool_args, Mapping):
             tool_args = {}
+        call_id = tool_call.get("id") or f"{tool_name}_{self._node_name(week_number)}"
 
         if tool_name in _WEEK_TOOL_NAMES:
             _, _, _ = self._update_unit(unit_key, tool_delta=1)
@@ -516,9 +653,28 @@ class WeekProgressMiddleware(_TrackedProgressMiddleware):
                     detail=self._detail(week_number, tool_name=tool_name, tool_args=dict(tool_args)),
                 )
 
+        # v2 GenUI: emit_tool_call started
+        emit_tool_call(
+            node=self._node_name(week_number),
+            tool_name=tool_name,
+            args=dict(tool_args),
+            status="started",
+            call_id=call_id,
+            task_name=self._task_name(week_number),
+        )
+
         try:
-            return await handler(request)
+            result = await handler(request)
         except Exception as exc:
+            emit_tool_call(
+                node=self._node_name(week_number),
+                tool_name=tool_name,
+                args=dict(tool_args),
+                status="error",
+                result=str(exc),
+                call_id=call_id,
+                task_name=self._task_name(week_number),
+            )
             emit_progress(
                 ProgressEventType.ERROR,
                 f"[{self._node_name(week_number)}] 工具调用失败({tool_name}): {exc}",
@@ -527,6 +683,18 @@ class WeekProgressMiddleware(_TrackedProgressMiddleware):
                 detail=self._detail(week_number, tool_name=tool_name),
             )
             raise
+
+        # v2 GenUI: emit_tool_call completed
+        emit_tool_call(
+            node=self._node_name(week_number),
+            tool_name=tool_name,
+            args=dict(tool_args),
+            status="completed",
+            result=_extract_result_content(result),
+            call_id=call_id,
+            task_name=self._task_name(week_number),
+        )
+        return result
 
     def after_agent(self, state: AgentState, runtime: Runtime[Any]) -> dict[str, Any] | None:
         if not self._has_final_week_output(state):

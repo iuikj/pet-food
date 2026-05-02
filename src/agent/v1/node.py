@@ -17,7 +17,14 @@ from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, Send
 
 from src.agent.common.entity.note import Note
-from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.stream_events import (
+    ProgressEventType,
+    emit_progress,
+    emit_ai_message,
+    emit_plan_snapshot,
+    emit_subagent_spawn,
+    extract_reasoning,
+)
 from src.agent.common.utils.struct import PetDietPlan, MonthlyDietPlan
 from src.agent.v1.models import CoordinationGuide
 from src.agent.v1.state import StateV1
@@ -54,6 +61,14 @@ async def research_planner(
             node="research_planner",
             progress=2,
         )
+    else:
+        # 已有计划 — 进入时发一次 plan_snapshot,前端 PlanBoardWidget 直接看到当前 todo 状态
+        emit_plan_snapshot(
+            node="research_planner",
+            plan=state["plan"],
+            action="snapshot",
+            progress=_estimate_research_progress(state),
+        )
 
     # 加载模型
     model = load_chat_model(
@@ -83,6 +98,15 @@ async def research_planner(
             ),
             *messages,
         ]
+    )
+
+    # AI 输出事件:抽出 reasoning 单独标识(qwen3 thinking / DeepSeek-R1 reasoning_content)
+    content, reasoning = extract_reasoning(response)
+    emit_ai_message(
+        node="research_planner",
+        content=content,
+        reasoning=reasoning,
+        message_id=getattr(response, "id", None),
     )
 
     if has_tool_calling(response):
@@ -124,6 +148,13 @@ async def research_planner(
                 task_name=task_name,
                 progress=progress,
             )
+            # 同时发 subagent_spawn 给 SubagentDispatchWidget 渲染
+            emit_subagent_spawn(
+                node="research_planner",
+                target="research_subagent",
+                task_name=task_name,
+                progress=progress,
+            )
             return Command(
                 goto="research_subagent",
                 update={
@@ -142,6 +173,15 @@ async def research_planner(
                 node="research_planner",
                 progress=5,
             )
+            # write_plan 的 args 含完整 plan 列表,前端立刻能看到 todo
+            plan_arg = cast(dict, args).get("plan") if isinstance(args, dict) else None
+            if plan_arg:
+                emit_plan_snapshot(
+                    node="research_planner",
+                    plan=[{"content": p, "status": "pending"} for p in plan_arg],
+                    action="created",
+                    progress=5,
+                )
         elif name == "finish_sub_plan":
             emit_progress(
                 ProgressEventType.PLAN_UPDATED,
@@ -234,6 +274,15 @@ async def dispatch_weeks(state: StateV1) -> Command[Literal["week_agent"]]:
 
     sends = []
     for assignment in guide.weekly_assignments:
+        # 每个 Send 之前发一个 week_dispatch 事件,前端 SubagentDispatchWidget 渲染
+        # "分发到第N周 Agent" 的扇出动效。
+        emit_subagent_spawn(
+            node="dispatch_weeks",
+            target="week_agent",
+            task_name=assignment.theme or f"第{assignment.week_number}周饮食计划",
+            week_number=assignment.week_number,
+            progress=30,
+        )
         sends.append(
             Send(
                 node="week_agent",

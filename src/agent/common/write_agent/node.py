@@ -7,7 +7,12 @@ from langgraph.prebuilt import ToolNode
 
 from src.agent.common.context import resolve_subgraph_context
 from src.agent.common.entity.note import create_write_note_tool
-from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.stream_events import (
+    ProgressEventType,
+    emit_progress,
+    emit_ai_message,
+    emit_tool_call,
+)
 from src.agent.common.write_agent.state import WriteState
 
 # 在模块级别创建工具实例
@@ -47,6 +52,22 @@ async def write(state: WriteState, config: RunnableConfig):
         ),
     )
 
+    # tool_choice 强制调用 write_note,response.tool_calls 必有一项 — 发 started 事件
+    # 让前端 NoteWriteWidget 渲染"保存笔记 [文件名]"卡片(含内容预览)。
+    tool_call_id = None
+    tool_args: dict = {}
+    if response.tool_calls:
+        tool_call_id = response.tool_calls[0].get("id")
+        tool_args = response.tool_calls[0].get("args") or {}
+
+    emit_tool_call(
+        node="write_note",
+        tool_name="write_note",
+        args=tool_args,
+        status="started",
+        call_id=tool_call_id,
+    )
+
     emit_progress(
         ProgressEventType.NOTE_SAVED,
         "笔记保存完成",
@@ -80,6 +101,13 @@ async def summary(state: WriteState, config: RunnableConfig):
         await summary_model.ainvoke(
             ctx.summary_prompt.format(task_result=task_content)
         ),
+    )
+
+    # 摘要内容作为 AI 消息送给前端,与"保存笔记"卡片并列显示
+    emit_ai_message(
+        node="write_note",
+        content=response.content,
+        message_id=getattr(response, "id", None),
     )
 
     emit_progress(

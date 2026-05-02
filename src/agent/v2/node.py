@@ -22,7 +22,11 @@ from langgraph.types import Command, Send
 
 from typing import Any, Literal
 
-from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.stream_events import (
+    ProgressEventType,
+    emit_progress,
+    emit_subagent_spawn,
+)
 from src.agent.common.utils.struct import (
     MonthlyDietPlan,
     PetDietPlan,
@@ -165,6 +169,14 @@ async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
 
     sends: list[Send] = []
     for assignment in guide.weekly_assignments:
+        # v2 GenUI: 触发前端 WeekParallelBlock inline 嵌入 (target=week_agent → view_type=week_dispatch)
+        emit_subagent_spawn(
+            node="dispatch_weeks",
+            target="week_agent",
+            task_name=getattr(assignment, "theme", None) or f"第{assignment.week_number}周",
+            week_number=assignment.week_number,
+            progress=40,
+        )
         sends.append(
             Send(
                 node="week_agent",
