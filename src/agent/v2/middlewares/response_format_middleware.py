@@ -5,6 +5,7 @@ from langchain.agents.middleware.types import ResponseT, ExtendedModelResponse, 
 from langchain.messages import AIMessage
 from langchain_core.messages import HumanMessage
 from langgraph.runtime import Runtime
+from copilotkit import CopilotKitMiddleware, CopilotKitState
 
 from src.agent.v2.models import WeekLightPlan
 
