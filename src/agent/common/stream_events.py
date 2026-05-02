@@ -127,50 +127,60 @@ class ProgressEvent(BaseModel):
 
 
 # ────────────────────────────────────────────────────────
-# 核心：双发 emit_progress
+# 核心：双发 emit_progress（sync + async 两套）
 # ────────────────────────────────────────────────────────
+#
+# 设计要点：
+#   - sync emit_*：用 `dispatch_custom_event` 同步发送，给 LangChain AgentMiddleware
+#     的 sync hook（before_agent / after_agent / wrap_model_call 的 sync 实现）使用
+#   - async aemit_*：`await adispatch_custom_event` 同步等待，给 async graph node 使用
+#   - 两套都不再走 `loop.create_task` fire-and-forget，彻底消除事件丢失风险
+#   - `emit_progress` 名字保留，向后兼容；新代码（async node）应优先用 `aemit_progress`
+
+
+def _build_payload(event_type: ProgressEventType, message: str, **kwargs: Any) -> dict:
+    return ProgressEvent(type=event_type, message=message, **kwargs).to_dict()
+
+
+def _emit_to_stream_writer(payload: dict) -> None:
+    """通道 ❶：写入 LangGraph custom stream（plan_service.py SSE 链路消费）。"""
+    try:
+        from langgraph.config import get_stream_writer
+        get_stream_writer()(payload)
+    except Exception:
+        # ainvoke 非流式 / 运行环境无 writer，静默跳过
+        pass
+
 
 def emit_progress(
     event_type: ProgressEventType,
     message: str,
     **kwargs: Any,
 ) -> None:
-    """
-    双通道发送进度消息。
-
-    通道 ❶ stream_writer：plan_service.py SSE 链路（已上线，保持不变）。
-    通道 ❷ dispatch_custom_event：ag_ui_langgraph → AG-UI CUSTOM 事件 → CopilotKit。
-
-    在非流式模式（ainvoke）下两条通道都会静默忽略，确保节点代码在所有调用方式下都能正常工作。
-    """
-    event = ProgressEvent(type=event_type, message=message, **kwargs)
-    payload = event.to_dict()
-
-    # 通道 ❶ stream_writer（plan_service.py 走这条；保持不变）
+    """SYNC：从 sync 函数（如 LangChain middleware 的 sync hook）发送进度事件。"""
+    payload = _build_payload(event_type, message, **kwargs)
+    _emit_to_stream_writer(payload)
+    # 通道 ❷ AG-UI custom event（同步路径）
     try:
-        from langgraph.config import get_stream_writer
-        writer = get_stream_writer()
-        writer(payload)
+        from langchain_core.callbacks.manager import dispatch_custom_event
+        dispatch_custom_event(event_type.value, payload)
     except Exception:
-        # ainvoke 模式下无 writer，或运行环境不支持，静默跳过
+        # callback manager 未配置（单元测试 / 非 graph 环境），静默
         pass
 
-    # 通道 ❷ adispatch_custom_event（ag_ui_langgraph 走这条；新增）
-    # adispatch_custom_event 是 async；在 sync 函数里只能用 ensure_future 异步触发，不阻塞节点。
-    # event_type.value 作为 on_custom_event 的 name 字段，前端按 name 路由。
+
+async def aemit_progress(
+    event_type: ProgressEventType,
+    message: str,
+    **kwargs: Any,
+) -> None:
+    """ASYNC：从 async graph node 发送进度事件，同步 await，避免 fire-and-forget。"""
+    payload = _build_payload(event_type, message, **kwargs)
+    _emit_to_stream_writer(payload)
     try:
         from langchain_core.callbacks.manager import adispatch_custom_event
-        loop = asyncio.get_running_loop()
-        loop.create_task(adispatch_custom_event(event_type.value, payload))
-    except RuntimeError:
-        # 当前线程没有 running loop（如单元测试 / 同步代码），降级到 sync dispatch
-        try:
-            from langchain_core.callbacks.manager import dispatch_custom_event
-            dispatch_custom_event(event_type.value, payload)
-        except Exception:
-            pass
+        await adispatch_custom_event(event_type.value, payload)
     except Exception:
-        # callback manager 未配置或其他异常，静默跳过
         pass
 
 
@@ -224,6 +234,35 @@ _TOOL_VIEW_MAP: dict[str, ViewType] = {
 }
 
 
+def _ai_message_args(
+    *,
+    node: str,
+    content: str,
+    reasoning: str | None = None,
+    message_id: str | None = None,
+    progress: int | None = None,
+    task_name: str | None = None,
+) -> tuple[ProgressEventType, str, dict] | None:
+    """构造 emit_ai_message 的 (event_type, message, kwargs)；空消息返回 None 让调用方 noop。"""
+    if not content and not reasoning:
+        return None
+    return (
+        ProgressEventType.AI_MESSAGE,
+        _truncate_preview(content or reasoning or ""),
+        dict(
+            node=node,
+            task_name=task_name,
+            progress=progress,
+            detail={
+                "view_type": ViewType.AI_MESSAGE.value,
+                "content": content or "",
+                "reasoning": reasoning,
+                "message_id": message_id,
+            },
+        ),
+    )
+
+
 def emit_ai_message(
     *,
     node: str,
@@ -233,28 +272,61 @@ def emit_ai_message(
     progress: int | None = None,
     task_name: str | None = None,
 ) -> None:
-    """发送 AI 文本输出事件（前端用 AIMessageWidget 渲染，下沉折叠）。
+    """SYNC：发送 AI 文本输出事件（前端用 AIMessageWidget 渲染，下沉折叠）。"""
+    args = _ai_message_args(
+        node=node, content=content, reasoning=reasoning,
+        message_id=message_id, progress=progress, task_name=task_name,
+    )
+    if args is None:
+        return
+    et, msg, kw = args
+    emit_progress(et, msg, **kw)
 
-    Args:
-        node: graph 节点名（如 "research_planner"、"week_agent_2"）
-        content: AI 完整输出
-        reasoning: 思考过程（qwen3 thinking / DeepSeek-R1 reasoning_content 抽出来的部分）
-        message_id: 可选，用于前端去重 / 引用
-    """
-    if not content and not reasoning:
-        return  # 空消息不发
-    emit_progress(
-        ProgressEventType.AI_MESSAGE,
-        _truncate_preview(content or reasoning or ""),
-        node=node,
-        task_name=task_name,
-        progress=progress,
-        detail={
-            "view_type": ViewType.AI_MESSAGE.value,
-            "content": content or "",
-            "reasoning": reasoning,
-            "message_id": message_id,
-        },
+
+async def aemit_ai_message(
+    *,
+    node: str,
+    content: str,
+    reasoning: str | None = None,
+    message_id: str | None = None,
+    progress: int | None = None,
+    task_name: str | None = None,
+) -> None:
+    """ASYNC：同 emit_ai_message。"""
+    args = _ai_message_args(
+        node=node, content=content, reasoning=reasoning,
+        message_id=message_id, progress=progress, task_name=task_name,
+    )
+    if args is None:
+        return
+    et, msg, kw = args
+    await aemit_progress(et, msg, **kw)
+
+
+def _tool_call_args(
+    *,
+    node: str,
+    tool_name: str,
+    args: dict | None = None,
+    status: str = "started",
+    result: Any = None,
+    call_id: str | None = None,
+    task_name: str | None = None,
+) -> tuple[ProgressEventType, str, dict]:
+    view_type = _TOOL_VIEW_MAP.get(tool_name, ViewType.TOOL_CALL_GENERIC).value
+    detail: dict[str, Any] = {
+        "view_type": view_type,
+        "tool_name": tool_name,
+        "args": args or {},
+        "status": status,
+        "call_id": call_id or f"{tool_name}_{node}",
+    }
+    if result is not None:
+        detail["result"] = _truncate_tool_result(result)
+    return (
+        ProgressEventType.TOOL_CALL,
+        f"{tool_name}: {status}",
+        dict(node=node, task_name=task_name, detail=detail),
     )
 
 
@@ -268,54 +340,44 @@ def emit_tool_call(
     call_id: str | None = None,
     task_name: str | None = None,
 ) -> None:
-    """发送工具调用事件（前端按 tool_name 路由到定制 Widget）。
+    """SYNC：发送工具调用事件（前端按 tool_name 路由到定制 Widget）。
 
     Args:
-        node: graph 节点名
-        tool_name: 工具名（tavily_search / query_note / write_note 等）
-        args: 工具入参 dict
-        status: started / completed / error
-        result: 工具返回值（completed 时传，会自动截断）
         call_id: 唯一调用 ID。前端按 call_id 合并 started + completed 两条事件为同一卡片。
                  若不传，会按 tool_name + node 生成；同节点同工具多次调用应显式传不同 call_id。
-        task_name: 可选，关联的任务名
     """
-    view_type = _TOOL_VIEW_MAP.get(tool_name, ViewType.TOOL_CALL_GENERIC).value
-    safe_args = args or {}
-
-    detail: dict[str, Any] = {
-        "view_type": view_type,
-        "tool_name": tool_name,
-        "args": safe_args,
-        "status": status,
-        "call_id": call_id or f"{tool_name}_{node}",
-    }
-    if result is not None:
-        detail["result"] = _truncate_tool_result(result)
-
-    emit_progress(
-        ProgressEventType.TOOL_CALL,
-        f"{tool_name}: {status}",
-        node=node,
-        task_name=task_name,
-        detail=detail,
+    et, msg, kw = _tool_call_args(
+        node=node, tool_name=tool_name, args=args, status=status,
+        result=result, call_id=call_id, task_name=task_name,
     )
+    emit_progress(et, msg, **kw)
 
 
-def emit_plan_snapshot(
+async def aemit_tool_call(
+    *,
+    node: str,
+    tool_name: str,
+    args: dict | None = None,
+    status: str = "started",
+    result: Any = None,
+    call_id: str | None = None,
+    task_name: str | None = None,
+) -> None:
+    """ASYNC：同 emit_tool_call。"""
+    et, msg, kw = _tool_call_args(
+        node=node, tool_name=tool_name, args=args, status=status,
+        result=result, call_id=call_id, task_name=task_name,
+    )
+    await aemit_progress(et, msg, **kw)
+
+
+def _plan_snapshot_args(
     *,
     node: str,
     plan: list,
     action: str = "snapshot",
     progress: int | None = None,
-) -> None:
-    """发送 deepagent 风格 todo 列表快照（前端用 PlanBoardWidget 渲染）。
-
-    Args:
-        node: graph 节点名
-        plan: list[Todo]，每项需有 .content 和 .status 属性（langchain_dev_utils Todo）
-        action: created / updated / completed_item / snapshot
-    """
+) -> tuple[ProgressEventType, str, dict]:
     items = []
     for it in plan or []:
         if isinstance(it, dict):
@@ -328,17 +390,70 @@ def emit_plan_snapshot(
                 "content": getattr(it, "content", str(it)),
                 "status": getattr(it, "status", "pending"),
             })
-
-    emit_progress(
+    return (
         ProgressEventType.PLAN_SNAPSHOT,
         f"任务列表 {action}",
-        node=node,
-        progress=progress,
-        detail={
-            "view_type": ViewType.PLAN_BOARD.value,
-            "items": items,
-            "action": action,
-        },
+        dict(
+            node=node,
+            progress=progress,
+            detail={
+                "view_type": ViewType.PLAN_BOARD.value,
+                "items": items,
+                "action": action,
+            },
+        ),
+    )
+
+
+def emit_plan_snapshot(
+    *,
+    node: str,
+    plan: list,
+    action: str = "snapshot",
+    progress: int | None = None,
+) -> None:
+    """SYNC：发送 deepagent 风格 todo 列表快照（前端用 PlanBoardWidget 渲染）。"""
+    et, msg, kw = _plan_snapshot_args(node=node, plan=plan, action=action, progress=progress)
+    emit_progress(et, msg, **kw)
+
+
+async def aemit_plan_snapshot(
+    *,
+    node: str,
+    plan: list,
+    action: str = "snapshot",
+    progress: int | None = None,
+) -> None:
+    """ASYNC：同 emit_plan_snapshot。"""
+    et, msg, kw = _plan_snapshot_args(node=node, plan=plan, action=action, progress=progress)
+    await aemit_progress(et, msg, **kw)
+
+
+def _subagent_spawn_args(
+    *,
+    node: str,
+    target: str,
+    task_name: str,
+    week_number: int | None = None,
+    progress: int | None = None,
+) -> tuple[ProgressEventType, str, dict]:
+    view_type = (
+        ViewType.WEEK_DISPATCH if target == "week_agent" else ViewType.SUBAGENT_DISPATCH
+    ).value
+    return (
+        ProgressEventType.SUBAGENT_SPAWN,
+        f"委派 → {target}: {task_name}",
+        dict(
+            node=node,
+            task_name=task_name,
+            progress=progress,
+            detail={
+                "view_type": view_type,
+                "target": target,
+                "task_name": task_name,
+                "week_number": week_number,
+            },
+        ),
     )
 
 
@@ -350,30 +465,28 @@ def emit_subagent_spawn(
     week_number: int | None = None,
     progress: int | None = None,
 ) -> None:
-    """发送任务委派事件（前端用 SubagentDispatchWidget 渲染）。
-
-    Args:
-        node: 发起委派的节点名（如 "research_planner"、"dispatch_weeks"）
-        target: 目标子图名（"research_subagent" / "week_agent" / "structure_report"）
-        task_name: 任务描述
-        week_number: 仅 target=week_agent 时填写
-    """
-    view_type = (
-        ViewType.WEEK_DISPATCH if target == "week_agent" else ViewType.SUBAGENT_DISPATCH
-    ).value
-    emit_progress(
-        ProgressEventType.SUBAGENT_SPAWN,
-        f"委派 → {target}: {task_name}",
-        node=node,
-        task_name=task_name,
-        progress=progress,
-        detail={
-            "view_type": view_type,
-            "target": target,
-            "task_name": task_name,
-            "week_number": week_number,
-        },
+    """SYNC：发送任务委派事件（前端用 SubagentDispatchWidget 渲染）。"""
+    et, msg, kw = _subagent_spawn_args(
+        node=node, target=target, task_name=task_name,
+        week_number=week_number, progress=progress,
     )
+    emit_progress(et, msg, **kw)
+
+
+async def aemit_subagent_spawn(
+    *,
+    node: str,
+    target: str,
+    task_name: str,
+    week_number: int | None = None,
+    progress: int | None = None,
+) -> None:
+    """ASYNC：同 emit_subagent_spawn。"""
+    et, msg, kw = _subagent_spawn_args(
+        node=node, target=target, task_name=task_name,
+        week_number=week_number, progress=progress,
+    )
+    await aemit_progress(et, msg, **kw)
 
 
 # ────────────────────────────────────────────────────────

@@ -11,9 +11,9 @@ from src.agent.common.context import resolve_subgraph_context
 from src.agent.common.entity.note import create_query_note_tool
 from src.agent.common.stream_events import (
     ProgressEventType,
-    emit_progress,
-    emit_ai_message,
-    emit_tool_call,
+    aemit_progress,
+    aemit_ai_message,
+    aemit_tool_call,
     extract_reasoning,
 )
 from src.agent.common.sub_agent.state import SubAgentState
@@ -35,7 +35,7 @@ query_note = create_query_note_tool(
 )
 
 
-def _emit_completed_tool_call_if_any(state: SubAgentState, node: str, task_name: str) -> None:
+async def _emit_completed_tool_call_if_any(state: SubAgentState, node: str, task_name: str) -> None:
     """
     入口检测：若上一条 temp_task_messages 是 ToolMessage,补发 tool_call completed 事件。
 
@@ -61,7 +61,7 @@ def _emit_completed_tool_call_if_any(state: SubAgentState, node: str, task_name:
     if not tool_name:
         return
 
-    emit_tool_call(
+    await aemit_tool_call(
         node=node,
         tool_name=tool_name,
         status="completed",
@@ -82,10 +82,10 @@ async def subagent_call_model(
     task_name = cast(dict, args).get("content", "")
 
     # 检测上一轮工具是否刚执行完,补发 completed 事件供前端合并 widget
-    _emit_completed_tool_call_if_any(state, node="subagent", task_name=task_name)
+    await _emit_completed_tool_call_if_any(state, node="subagent", task_name=task_name)
 
     # 发送任务开始执行进度
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.TASK_EXECUTING,
         f"子智能体开始执行任务: {task_name}",
         node="subagent",
@@ -125,7 +125,7 @@ async def subagent_call_model(
 
     # AI 输出事件 — 子智能体 LLM 决策可见(reasoning 自动抽出)
     content, reasoning = extract_reasoning(response)
-    emit_ai_message(
+    await aemit_ai_message(
         node="subagent",
         content=content,
         reasoning=reasoning,
@@ -143,7 +143,7 @@ async def subagent_call_model(
             tool_call_id = response.tool_calls[0].get("id")
 
         # 发 tool_call started 事件 — 前端按 tool_name 路由到 SearchToolWidget / NoteReadWidget 等
-        emit_tool_call(
+        await aemit_tool_call(
             node="subagent",
             tool_name=tool_name,
             args=cast(dict, tool_args) if isinstance(tool_args, dict) else {},
@@ -154,14 +154,14 @@ async def subagent_call_model(
 
         # 根据工具类型发送对应 phase 进度事件(保留旧行为,plan_service SSE 仍消费)
         if tool_name == "tavily_search":
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.TASK_SEARCHING,
                 "正在搜索相关信息...",
                 node="subagent",
                 task_name=task_name,
             )
         elif tool_name == "query_note":
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.TASK_QUERYING_NOTE,
                 "正在查询历史笔记...",
                 node="subagent",
@@ -173,7 +173,7 @@ async def subagent_call_model(
         )
 
     # 任务执行完成（无工具调用，返回最终结果）
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.TASK_COMPLETED,
         f"任务执行完成: {task_name}",
         node="subagent",

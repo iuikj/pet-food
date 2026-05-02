@@ -24,8 +24,8 @@ from typing import Any, Literal
 
 from src.agent.common.stream_events import (
     ProgressEventType,
-    emit_progress,
-    emit_subagent_spawn,
+    aemit_progress,
+    aemit_subagent_spawn,
 )
 from src.agent.common.utils.struct import (
     MonthlyDietPlan,
@@ -110,7 +110,9 @@ def _make_backend() -> CompositeBackend:
 
 plan_agent_with_sub = create_deep_agent(
     name="plan_agent",
-    model=load_chat_model(ContextV2.plan_model),
+    model=load_chat_model(
+        model=ContextV2().plan_model
+    ),
     subagents=[
         websearch_sub_agent,
         nutrition_calc_sub_agent,
@@ -127,14 +129,14 @@ plan_agent_with_sub = create_deep_agent(
 # ──────────────────────────── Phase 1→2: 协调指南生成 ────────────────────────────
 
 async def generate_coordination_guide(state: State):
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.RESEARCH_FINALIZING,
         "根据调研笔记生成四周差异化协调指南",
         node="generate_coordination_guide",
         progress=30,
     )
     coordination_agent = create_agent(
-        model=load_chat_model(ContextV2.plan_model),
+        model=load_chat_model(ContextV2().plan_model),
         middleware=[coordination_agent_prompt],
         response_format=CoordinationGuide,
         context_schema=ContextV2,
@@ -160,7 +162,7 @@ async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
     guide: CoordinationGuide = state["coordination_guide"]
     ctx: ContextV2 = get_runtime().context
 
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.DISPATCHING,
         f"向 {len(guide.weekly_assignments)} 个并行 week_agent 分发任务",
         node="dispatch_weeks",
@@ -170,7 +172,7 @@ async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
     sends: list[Send] = []
     for assignment in guide.weekly_assignments:
         # v2 GenUI: 触发前端 WeekParallelBlock inline 嵌入 (target=week_agent → view_type=week_dispatch)
-        emit_subagent_spawn(
+        await aemit_subagent_spawn(
             node="dispatch_weeks",
             target="week_agent",
             task_name=getattr(assignment, "theme", None) or f"第{assignment.week_number}周",
@@ -221,7 +223,7 @@ async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
 week_agent = create_agent(
     name="week_agent",
     model=load_chat_model(
-        ContextV2.week_model,
+        ContextV2().week_model,
         extra_body={
             "thinking": {"type": "disabled"}
         }),
@@ -233,7 +235,6 @@ week_agent = create_agent(
         trigger_week_agent,
         week_progress_middleware,
         collect_week_light_plan,
-        ban_sub_agent
     ],
     context_schema=ContextV2,
     response_format=ToolStrategy(WeekLightPlan),
@@ -278,7 +279,7 @@ async def gather_and_structure(state: State):
     ctx: ContextV2 = get_runtime().context
     light_plans: list[WeekLightPlan] = list(state.get("week_light_plans") or [])
 
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.GATHERING,
         f"汇总 {len(light_plans)} 个轻量周计划，开始批量查询食材数据",
         node="gather_and_structure",
@@ -304,7 +305,7 @@ async def gather_and_structure(state: State):
         len(rows_by_name), len(names),
     )
 
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.STRUCTURING,
         f"组装 4 周 WeeklyDietPlan（命中食材 {len(rows_by_name)}/{len(names)}）",
         node="gather_and_structure",
@@ -320,7 +321,7 @@ async def gather_and_structure(state: State):
     # 3) 可选 1 次 LLM 生成 ai_suggestions
     ai_suggestions = await _generate_ai_suggestions(weekly_plans, ctx.summary_model)
 
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.STRUCTURED,
         "周计划结构化完成",
         node="gather_and_structure",
@@ -338,7 +339,7 @@ async def gather_and_structure(state: State):
         for plan in weekly_plans
     ]
 
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.COMPLETED,
         "月度饮食计划全部生成完成",
         node="gather_and_structure",

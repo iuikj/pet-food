@@ -16,9 +16,9 @@ from langgraph.types import Command
 
 from src.agent.common.stream_events import (
     ProgressEventType,
-    emit_progress,
-    emit_ai_message,
-    emit_tool_call,
+    aemit_progress,
+    aemit_ai_message,
+    aemit_tool_call,
     extract_reasoning,
 )
 from src.agent.common.tools import tavily_search
@@ -35,7 +35,7 @@ query_shared_note = create_query_shared_note_tool()
 week_write_note = create_week_write_note_tool()
 
 
-def _emit_completed_tool_call_from_messages(
+async def _emit_completed_tool_call_from_messages(
     messages_key_value: list,
     *,
     node: str,
@@ -65,7 +65,7 @@ def _emit_completed_tool_call_from_messages(
     if not tool_name:
         return
 
-    emit_tool_call(
+    await aemit_tool_call(
         node=node,
         tool_name=tool_name,
         status="completed",
@@ -91,7 +91,7 @@ async def week_planner(
     # 首次进入时发送进度
     if not state.get("week_messages"):
         base_progress = 30 + (week_num - 1) * 12
-        emit_progress(
+        await aemit_progress(
             ProgressEventType.WEEK_PLANNING,
             f"第{week_num}周: 开始制定饮食计划...",
             node=week_node,
@@ -100,7 +100,7 @@ async def week_planner(
         )
     else:
         # 从 week_tools 循环回来 — 上一轮工具结果落在 week_messages 末尾
-        _emit_completed_tool_call_from_messages(
+        await _emit_completed_tool_call_from_messages(
             state.get("week_messages") or [],
             node=week_node,
             task_name=task_label,
@@ -151,7 +151,7 @@ async def week_planner(
 
     # AI 输出事件 — 第N周 LLM 决策可见
     content, reasoning = extract_reasoning(response)
-    emit_ai_message(
+    await aemit_ai_message(
         node=week_node,
         content=content,
         reasoning=reasoning,
@@ -168,7 +168,7 @@ async def week_planner(
             tool_call_id = response.tool_calls[0].get("id")
 
         # 发 tool_call started 事件 — SearchToolWidget / NoteReadWidget 渲染
-        emit_tool_call(
+        await aemit_tool_call(
             node=week_node,
             tool_name=tool_name,
             args=cast(dict, tool_args) if isinstance(tool_args, dict) else {},
@@ -178,7 +178,7 @@ async def week_planner(
         )
 
         if tool_name == "tavily_search":
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.WEEK_SEARCHING,
                 f"第{week_num}周: 正在搜索相关食材信息...",
                 node=week_node,
@@ -192,7 +192,7 @@ async def week_planner(
 
     # 无工具调用 — 计划已完成，进入写入阶段
     base_progress = 30 + (week_num - 1) * 12 + 8
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.WEEK_PLAN_READY,
         f"第{week_num}周: 饮食计划制定完成，正在保存...",
         node=week_node,
@@ -217,7 +217,7 @@ async def week_write(state: WeekAgentState, config: RunnableConfig) -> Command[L
     week_node = f"week_agent_{week_num}"
     task_label = f"第{week_num}周饮食计划"
 
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.WEEK_WRITING,
         f"第{week_num}周: 正在保存饮食计划笔记...",
         node=week_node,
@@ -251,7 +251,7 @@ async def week_write(state: WeekAgentState, config: RunnableConfig) -> Command[L
         tool_call_id = response.tool_calls[0].get("id")
         tool_args = response.tool_calls[0].get("args") or {}
 
-    emit_tool_call(
+    await aemit_tool_call(
         node=week_node,
         tool_name="week_write_note",
         args=tool_args,
@@ -278,7 +278,7 @@ async def week_finalize(state: WeekAgentState):
     task_label = f"第{week_num}周饮食计划"
 
     # 上一节点是 week_write_tool — 补发 week_write_note 的 completed 事件
-    _emit_completed_tool_call_from_messages(
+    await _emit_completed_tool_call_from_messages(
         state.get("week_write_messages") or [],
         node=week_node,
         task_name=task_label,
@@ -289,7 +289,7 @@ async def week_finalize(state: WeekAgentState):
     note_count = len(notes)
 
     base_progress = 30 + week_num * 12
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.WEEK_COMPLETED,
         f"第{week_num}周: 饮食计划完成 (已保存 {note_count} 条笔记)",
         node=week_node,

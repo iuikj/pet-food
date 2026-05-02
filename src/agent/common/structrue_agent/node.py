@@ -6,7 +6,7 @@ from langchain_dev_utils.chat_models import load_chat_model
 from langgraph.types import Command
 
 from src.agent.common.context import resolve_subgraph_context
-from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.stream_events import ProgressEventType, aemit_progress
 from src.agent.common.structrue_agent.state import StructState
 from src.agent.common.utils.struct import WeeklyDietPlan
 
@@ -37,7 +37,7 @@ async def structure_report(state: StructState, config: RunnableConfig) -> Comman
 
         is_retry = bool(state.get("failed_reason"))
         if is_retry:
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.STRUCTURING_RETRY,
                 "结构化解析失败，正在重试...",
                 node="structure_report",
@@ -49,7 +49,7 @@ async def structure_report(state: StructState, config: RunnableConfig) -> Comman
                 ]
             )
         else:
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.STRUCTURING,
                 "正在解析饮食计划为结构化数据...",
                 node="structure_report",
@@ -63,7 +63,7 @@ async def structure_report(state: StructState, config: RunnableConfig) -> Comman
         if response.get("parsed"):
             parsed_plan: WeeklyDietPlan = response.get("parsed")
             week_num = getattr(parsed_plan, "oder", None)
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.STRUCTURED,
                 f"第{week_num}周饮食计划解析完成" if week_num else "饮食计划解析完成",
                 node="structure_report",

@@ -19,10 +19,10 @@ from langgraph.types import Command, Send
 from src.agent.common.entity.note import Note
 from src.agent.common.stream_events import (
     ProgressEventType,
-    emit_progress,
-    emit_ai_message,
-    emit_plan_snapshot,
-    emit_subagent_spawn,
+    aemit_progress,
+    aemit_ai_message,
+    aemit_plan_snapshot,
+    aemit_subagent_spawn,
     extract_reasoning,
 )
 from src.agent.common.utils.struct import PetDietPlan, MonthlyDietPlan
@@ -55,7 +55,7 @@ async def research_planner(
     has_plan = bool(state.get("plan"))
 
     if not has_plan:
-        emit_progress(
+        await aemit_progress(
             ProgressEventType.RESEARCH_STARTING,
             "正在分析宠物信息，制定研究计划...",
             node="research_planner",
@@ -63,7 +63,7 @@ async def research_planner(
         )
     else:
         # 已有计划 — 进入时发一次 plan_snapshot,前端 PlanBoardWidget 直接看到当前 todo 状态
-        emit_plan_snapshot(
+        await aemit_plan_snapshot(
             node="research_planner",
             plan=state["plan"],
             action="snapshot",
@@ -102,7 +102,7 @@ async def research_planner(
 
     # AI 输出事件:抽出 reasoning 单独标识(qwen3 thinking / DeepSeek-R1 reasoning_content)
     content, reasoning = extract_reasoning(response)
-    emit_ai_message(
+    await aemit_ai_message(
         node="research_planner",
         content=content,
         reasoning=reasoning,
@@ -120,7 +120,7 @@ async def research_planner(
 
         if all_done:
             # 所有研究任务完成，生成协调指南
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.RESEARCH_FINALIZING,
                 "研究完成，正在生成四周差异化协调指南...",
                 node="research_planner",
@@ -141,7 +141,7 @@ async def research_planner(
                 cast(dict, args).get("content", "") if isinstance(args, dict) else ""
             )
             progress = _estimate_research_progress(state)
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.RESEARCH_TASK_DELEGATING,
                 f"正在委派研究任务: {task_name}",
                 node="research_planner",
@@ -149,7 +149,7 @@ async def research_planner(
                 progress=progress,
             )
             # 同时发 subagent_spawn 给 SubagentDispatchWidget 渲染
-            emit_subagent_spawn(
+            await aemit_subagent_spawn(
                 node="research_planner",
                 target="research_subagent",
                 task_name=task_name,
@@ -167,7 +167,7 @@ async def research_planner(
 
         # ── 其他工具（write_plan, finish_sub_plan, ls, query_note）──
         if name == "write_plan":
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.PLAN_CREATED,
                 "研究任务计划已创建",
                 node="research_planner",
@@ -176,14 +176,14 @@ async def research_planner(
             # write_plan 的 args 含完整 plan 列表,前端立刻能看到 todo
             plan_arg = cast(dict, args).get("plan") if isinstance(args, dict) else None
             if plan_arg:
-                emit_plan_snapshot(
+                await aemit_plan_snapshot(
                     node="research_planner",
                     plan=[{"content": p, "status": "pending"} for p in plan_arg],
                     action="created",
                     progress=5,
                 )
         elif name == "finish_sub_plan":
-            emit_progress(
+            await aemit_progress(
                 ProgressEventType.PLAN_UPDATED,
                 "研究任务进度已更新",
                 node="research_planner",
@@ -193,7 +193,7 @@ async def research_planner(
         return Command(goto="research_tools", update={"messages": [response]})
 
     # 无工具调用 — 研究阶段自然结束，直接 dispatch
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.RESEARCH_FINALIZING,
         "研究完成，正在生成四周差异化协调指南...",
         node="research_planner",
@@ -265,7 +265,7 @@ async def dispatch_weeks(state: StateV1) -> Command[Literal["week_agent"]]:
     notes: dict[str, Note] = state.get("note") or {}
     info = state["pet_information"]
 
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.DISPATCHING,
         "正在分发四周饮食计划任务（并行执行）...",
         node="dispatch_weeks",
@@ -276,7 +276,7 @@ async def dispatch_weeks(state: StateV1) -> Command[Literal["week_agent"]]:
     for assignment in guide.weekly_assignments:
         # 每个 Send 之前发一个 week_dispatch 事件,前端 SubagentDispatchWidget 渲染
         # "分发到第N周 Agent" 的扇出动效。
-        emit_subagent_spawn(
+        await aemit_subagent_spawn(
             node="dispatch_weeks",
             target="week_agent",
             task_name=assignment.theme or f"第{assignment.week_number}周饮食计划",
@@ -308,7 +308,7 @@ async def collect_and_structure(state: StateV1) -> Command[Literal["structure_re
     """收集所有 week_agent 产出的 diet_plan 笔记，Send 到结构化智能体"""
     notes: dict[str, Note] = state.get("note") or {}
 
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.GATHERING,
         "所有周计划已完成，正在进入结构化解析阶段...",
         node="collect_and_structure",
@@ -344,7 +344,7 @@ async def gather(state: StateV1):
         for p in weekly_plans
     ]
 
-    emit_progress(
+    await aemit_progress(
         ProgressEventType.COMPLETED,
         f"月度饮食计划生成完成！共 {len(weekly_plans)} 周计划",
         node="gather",
