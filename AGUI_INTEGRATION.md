@@ -2,7 +2,21 @@
 
 > 本次实验：在**不改 v2 graph 实现**的前提下，让前端 CopilotKit 直连 FastAPI ag-ui-langgraph 端点，跑通 LangGraph 1.x dataclass `context_schema`。
 >
-> 完成日期：2026-04-30 → 2026-05-01（v2 迁移完成）
+> 完成日期：2026-04-30 → 2026-05-01（v2 迁移完成）；2026-05-02 精简重构
+
+---
+
+## ⚡ 2026-05-02 精简版变更（重要）
+
+基于对 ag_ui_langgraph 与 LangGraph 1.x 的源码深挖（详见 [`agui-langgraph-learn/07-LangGraph1.x接入实战教训.md`](../../agui-langgraph-learn/07-LangGraph1.x接入实战教训.md)），适配层从 230 行缩到 ~110 行：
+
+- **ContextV2** 由 `@dataclass` 改 `Pydantic BaseModel(extra='ignore', arbitrary_types_allowed=True)`：自动吞 `thread_id` 等系统字段、自动从 dict 验证 PetInformation 字段，无需 wrapper 手工过滤
+- **wrapper 删除** `_current_forwarded_props` ContextVar、`_coerce_pet_information`、`get_schema_keys` 重写（共 165 行）
+- **wrapper 新增** `get_stream_kwargs` 重写：强制传 `context`，绕过 ag_ui_langgraph 的 `inspect.signature` bug（详见 Pit 14）
+- **wrapper 新增** `__init__` 注入 `recursion_limit=1000`：因为 `graph.with_config()` 不被 ag_ui_langgraph 继承（详见 Pit 15）
+- **emit_progress** 改为 sync `emit_*` + async `aemit_*` 双 API，async graph node 用 `await aemit_*` 同步等待，彻底消除 fire-and-forget 时序风险
+- **前端 contextualHttpAgent.js** 仅 override `requestInit` 单 hook（90 行 → 25 行），符合 ag-ui-protocol 官方推荐模式
+- **logging filter** 静音 `OnToolEnd received non-ToolMessage output` 假警报（详见 Pit 17）
 
 ---
 
@@ -270,8 +284,55 @@
 | 现象 | 前端调 `agent.setForwardedProps({...})`，后端 log 显示 `forwarded_props keys=(empty)` —— 业务字段一个都没传过来 |
 | 根因 | CopilotKit v2 `useAgent({ threadId })` 在 `cloneForThread` 中调用 `source.clone()` 创建 per-thread 实例（见 `copilotkit-Bd0m5HFp.mjs:cloneForThread`）。`HttpAgent.clone()` 用 `Object.create(Object.getPrototypeOf(this))`：**不跑 constructor，不复制实例属性**。所以子类 constructor 里 `this._extraForwardedProps = {}` 在 clone 上不存在；即便 override `clone()` 在那一刻拷贝，后续 `setForwardedProps` 修改的也是 registry agent 的字段，clone 实例完全感知不到 |
 | 修复 | **不要用 instance attribute，用工厂函数 + 闭包 box**：`createContextualHttpAgent({ url })` 内部维护一个 `box = { value: {} }`，class 方法通过闭包引用 box；clone 实例与 registry agent 共享同一个 prototype，方法体内引用同一个 box —— 「set 一次，所有实例都看到」 |
-| 验证 | 前端开 `import.meta.env.DEV` 在 `prepareRunAgentInput` / `run` 里 `console.log` 当前 `box.value`；后端在 `run()` 入口 / `get_stream_kwargs()` 出口加 `logger.info` 看 `forwarded_props keys=...` 与 `ContextV2 注入完成 user_id=... pet_information=...` |
+| 验证 | 前端开 `import.meta.env.DEV` 在 `requestInit` 里 `console.log` 当前 `box.value`；后端在 `run()` 入口加 `logger.info` 看 `forwarded_props keys=...` 与 `ContextV2 注入完成 user_id=... pet_information=...` |
 | 复用 | **任何需要随时间变化的 agent 配置（不只是 forwardedProps；也包括 headers fn、auth token 等）都用这个闭包 box 模式，不要靠 instance attribute** |
+
+---
+
+### Pit 14: ⚠️⚠️ `astream_events` 通过 `**kwargs` 接 `context`，`inspect.signature` 看不到（**最深坑**）
+
+> 这条直接导致 `runtime.context` 永远为 `None`，所有节点 `ctx.research_planner_prompt` 等访问全部抛 `'NoneType' object has no attribute ...`。
+
+| | |
+|---|---|
+| 现象 | 节点 / middleware 里 `ctx: ContextV2 = request.runtime.context` 拿到 `None`，访问任何字段都崩 |
+| 根因 | `ag_ui_langgraph.LangGraphAgent.get_stream_kwargs` 用 `inspect.signature(graph.astream_events)` 判断是否传 context：<br>```python<br>if 'context' in sig.parameters:  # ❌ 永远 False<br>    kwargs['context'] = base_context<br>```<br>但 LangGraph 1.x 的 `astream_events(input, config, version, **kwargs)` 通过 **kwargs 接收 context 转发给内部 astream，sig 看不到。结果 `kwargs['context']` 永远不被设置 → `_coerce_context(schema, None) → None` |
+| 实测 | `g.astream_events(context={'user_id': 'u1'}, version='v2')` 在 LangGraph 1.x 上**实际能正确注入** runtime.context，仅是 `inspect.signature` 不显示 context 参数 |
+| 修复 | wrapper 重写 `get_stream_kwargs`，去掉 sig 检查直接强制传：<br>```python<br>def get_stream_kwargs(self, input, *, config=None, context=None, **rest):<br>    kwargs = dict(input=input, **rest)<br>    base = {}<br>    if isinstance(config, dict) and isinstance(config.get("configurable"), dict):<br>        base.update(config["configurable"])<br>    if context: base.update(context)<br>    if base: kwargs["context"] = base<br>    if config: kwargs["config"] = config<br>    return kwargs<br>``` |
+| 收益 | **删除 200+ 行 wrapper patch**：原来靠 `_current_forwarded_props` ContextVar + `_coerce_pet_information` + `get_stream_kwargs` 重写过滤 thread_id 才让节点拿到 ContextV2。修复 sig 检查后，ag_ui_langgraph 标准路径 + Pydantic `extra='ignore'` 直接生效 |
+
+---
+
+### Pit 15: `graph.with_config(recursion_limit=N)` 在 ag_ui_langgraph 路径失效
+
+| | |
+|---|---|
+| 现象 | v2 graph 编译时 `.with_config(recursion_limit=1000)`，跑起来仍报 `GraphRecursionError: Recursion limit of 25 reached` |
+| 根因 | `with_config` 把默认值挂在 `CompiledStateGraph` 上，但 ag_ui_langgraph 的 `_handle_stream_events` **重新构造** config（`config = ensure_config(self.config.copy() if self.config else {})`），不继承 graph 默认值 |
+| 修复 | wrapper 的 `__init__` 把 recursion_limit 直接放 `self.config`：<br>```python<br>def __init__(self, *, name, graph, description=None, config=None):<br>    merged = dict(config or {})<br>    merged.setdefault("recursion_limit", 1000)<br>    super().__init__(..., config=merged)<br>``` |
+| 兜底 | `get_stream_kwargs` 里再加一层 `if "recursion_limit" not in config: config = {**config, "recursion_limit": 1000}` 防止父类构造的 config 漏掉 |
+
+---
+
+### Pit 16: `agui_messages_to_langchain` 对 reasoning role 抛 `ValueError`
+
+| | |
+|---|---|
+| 现象 | 用户在流式 reasoning 输出时中断生成，下一次请求带历史 messages（含 `role="reasoning"`），后端崩 `ValueError: Unsupported message role: reasoning` |
+| 根因 | `ag_ui_langgraph/utils.py:280` 仅识别 user/assistant/system/tool 4 种 role，其它直接 `raise ValueError` |
+| 修复 | wrapper 的 `run` 在 `super().run` 之前过滤：<br>```python<br>_AGUI_STANDARD_ROLES = frozenset({"user", "assistant", "system", "tool"})<br>if input.messages:<br>    filtered = [m for m in input.messages if m.role in _AGUI_STANDARD_ROLES]<br>    if len(filtered) < len(input.messages):<br>        input = input.copy(update={"messages": filtered})<br>``` |
+| 长期 | 前端可在 `agent.subscribe({onMessagesChanged})` 里也跳过 reasoning role 持久化，但后端兜底**始终必要**（agui_messages_to_langchain 是协议层强制） |
+
+---
+
+### Pit 17: `OnToolEnd received non-ToolMessage output` 假警报
+
+| | |
+|---|---|
+| 现象 | 日志频繁出现 `WARNING ag_ui_langgraph.agent: OnToolEnd received non-ToolMessage output ('dict'); skipping dispatch`，但功能正常 |
+| 根因 | LangChain 1.x 的 `@tool` 装饰器在 `on_tool_end` 事件发的是**工具原始返回值**（dict / list / str），ag_ui_langgraph 期望它是 ToolMessage。这条路径上 `TOOL_CALL_*` 已经在 `OnChatModelStream` 阶段从 `tool_call_chunks` 发出，warning 跳过的"补发"对前端无感知 |
+| 修复 | 模块加载时给 `ag_ui_langgraph.agent` logger 装 logging filter：<br>```python<br>class _SilenceNonToolMessageWarning(logging.Filter):<br>    _NEEDLE = "OnToolEnd received non-ToolMessage output"<br>    def filter(self, record):<br>        return self._NEEDLE not in record.getMessage()<br>logging.getLogger("ag_ui_langgraph.agent").addFilter(_SilenceNonToolMessageWarning())<br>``` |
+| 风险 | 真出现工具返回类型不匹配时也会被静默；但当前所有工具用 `@tool` 装饰，返回值由 LangChain 自动包装，这种风险极低 |
 
 ---
 
@@ -378,19 +439,47 @@
 
 本项目（Vite）只能选直连。
 
-### 6.6 LangGraph 1.x context 注入完整链
+### 6.6 LangGraph 1.x context 注入完整链（v2 修复版）
 
-```python
-# ag-ui-langgraph 的逻辑
-graph.astream_events(context=dict_or_instance)
-  ↓ _coerce_context(context_schema, context)
-  ↓ if context is dict and is_dataclass(schema):
-      return schema(**context)   # ← 多余 key → TypeError
-  ↓ if context is None:
-      return None                # ← 此时 runtime.context = None
+```
+前端 setForwardedProps({pet_information, user_id})
+  ↓ HttpAgent.requestInit() 把 box.value spread 进 forwardedProps
+  ↓ POST /langgraph
+  ↓
+DataclassAwareLangGraphAGUIAgent.run(input)
+  ↓ ① 过滤 reasoning role 历史消息（agui_messages_to_langchain 不识别）
+  ↓ ② 把 forwarded_props 白名单字段 → self.config["configurable"]
+  ↓ super().run(input)
+  ↓
+ag_ui_langgraph._handle_stream_events
+  ↓ ③ config = ensure_config(self.config.copy())
+  ↓ ④ config["configurable"]["thread_id"] = thread_id
+  ↓ ⑤ self.get_stream_kwargs(input, config)  ← wrapper override
+  ↓     • base_context = config["configurable"]
+  ↓     • kwargs["context"] = base_context  ← 强制传，绕过 sig 检查
+  ↓     • 兜底注入 recursion_limit=1000
+  ↓ ⑥ graph.astream_events(**kwargs)
+  ↓
+LangGraph pregel/main.py
+  ↓ ⑦ _coerce_context(ContextV2, dict)
+  ↓ ⑧ ContextV2(**dict)   ← Pydantic + extra='ignore' 自动吞 thread_id
+  ↓     PetInformation 字段从 dict 自动验证
+  ↓
+节点 / Middleware
+  ctx: ContextV2 = request.runtime.context  ← 完整实例 ✅
+  ctx.pet_information.pet_type
+  ctx.user_id
 ```
 
-**最佳实践**：在 wrapper 里直接传 `schema(**filtered)` 实例，绕过 `_coerce_context` 的隐式转换。
+**两个关键 bug 修复点**（详见 Pit 14-15）：
+
+1. **强制传 context**：ag_ui_langgraph 用 `inspect.signature` 判断是否传 context，但 LangGraph 1.x `astream_events` 通过 `**kwargs` 接收，sig 看不到 → 永远跳过传递。wrapper override `get_stream_kwargs` 直接强制传。
+
+2. **强制传 recursion_limit**：`graph.with_config(recursion_limit=1000)` 不被 ag_ui_langgraph 继承（它重新构造 config）。wrapper 的 `__init__` 把它放进 `self.config` 让所有衍生 config 都带上。
+
+**Schema 选型**：用 Pydantic `BaseModel(extra='ignore', arbitrary_types_allowed=True)` 而不是 dataclass。`extra='ignore'` 自动吞 `thread_id` 等系统字段，`PetInformation` 类型字段自动从 dict 验证为实例，**不需要任何 wrapper 过滤代码**。
+
+> 类属性访问坑：dataclass 时代写 `load_chat_model(ContextV2.plan_model)` 直接拿字符串；Pydantic v2 中 `Class.field` 返回 `FieldInfo`，需改成 `ContextV2().plan_model` 实例化访问，或提取模块级常量。
 
 ### 6.7 v2 CSS Shim 完整实现（Tailwind 3.x 项目必备）
 

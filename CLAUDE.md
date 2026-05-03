@@ -331,6 +331,15 @@ v1 默认模型: `dashscope:qwen3.5-plus` (规划/周计划/报告), `dashscope:
 
 ## 变更记录
 
+### 2026-05-02
+- **AG-UI 适配层精简**：基于对 `ag_ui_langgraph` + LangGraph 1.x 源码深挖，wrapper 从 230 行缩到 ~110 行
+  - `src/agent/v2/utils/context.py`：`ContextV2` 由 `@dataclass` 改为 `Pydantic BaseModel(extra='ignore')`，自动吞 `thread_id` 等系统字段、自动验证 PetInformation
+  - `src/api/agui_agent.py`：删除 ContextVar / coerce / get_schema_keys 重写；新增 `get_stream_kwargs` override 强制传 context（修复 ag_ui_langgraph 的 `inspect.signature` bug）；`__init__` 注入 `recursion_limit=1000`（修复 `graph.with_config()` 不被继承）；模块级 logging filter 静音 `OnToolEnd received non-ToolMessage` 假警报
+  - `src/agent/common/stream_events.py`：`emit_*` 拆 sync + async (`aemit_*`) 双 API，async graph node 改用 `await aemit_*` 同步等待，消除 `loop.create_task` fire-and-forget 时序风险
+  - `frontend/web-app/src/utils/contextualHttpAgent.js`：仅 override `requestInit` 单 hook（90 行 → 25 行），符合 ag-ui-protocol 官方推荐
+  - 五大兼容坑（runtime.context=None / recursion_limit / reasoning role / OnToolEnd / clone）沉淀至 [`agui-langgraph-learn/07-LangGraph1.x接入实战教训.md`](../../agui-langgraph-learn/07-LangGraph1.x接入实战教训.md) 与 [`AGUI_INTEGRATION.md` Pit 14-17](./AGUI_INTEGRATION.md)
+  - 修订 `agui-langgraph-learn` 系列文档（01-05）的事件名 / API 路径 / 心法描述，与官方 SDK 对齐
+
 ### 2026-04-23
 - 完成本机 Docker 全栈部署（含 MinIO）：`deployment/docker-compose.prod.yml` + `deploy.ps1`/`deploy.sh` + `migrate.ps1`
 - PG 从 16 升级到 17，与本机版本对齐（避免 `pg_dump` 跨版本 `SET transaction_timeout` 坑）
