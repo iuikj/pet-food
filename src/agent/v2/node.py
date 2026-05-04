@@ -115,8 +115,8 @@ plan_agent_with_sub = create_deep_agent(
     ),
     subagents=[
         websearch_sub_agent,
-        nutrition_calc_sub_agent,
-        ingredient_query_sub_agent,
+        # nutrition_calc_sub_agent,
+        # ingredient_query_sub_agent,
     ],
     backend=_make_backend(),
     skills=["/skills/"],

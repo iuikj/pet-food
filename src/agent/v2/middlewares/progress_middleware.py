@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, Callable, Awaitable
 
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, ExtendedModelResponse
 from langchain.agents.middleware.types import (
     AgentState,
     ModelRequest,
@@ -28,6 +28,7 @@ from langchain.messages import AIMessage, HumanMessage
 from langchain_core.messages import ToolMessage
 from langgraph.runtime import Runtime
 from langgraph.types import Command
+from langgraph.typing import ContextT
 from pydantic import BaseModel, Field
 from typing_extensions import NotRequired
 
@@ -57,12 +58,12 @@ class SubAgentInfo(BaseModel):
 class ProgressState(AgentState, total=False):
     is_subagent: NotRequired[bool]
     subagent_info: NotRequired[SubAgentInfo]
-    parent_call_id: NotRequired[str]
-    subagent_type: NotRequired[str]
-    week_assignment: NotRequired[Any]
-    structured_response: NotRequired[Any]
-    week_light_plans: NotRequired[Any]
-
+    # parent_call_id: NotRequired[str]
+    # subagent_type: NotRequired[str]
+    # week_assignment: NotRequired[Any]
+    # structured_response: NotRequired[Any]
+    # week_light_plans: NotRequired[Any]
+    # 只留这些,这个state是拓展而已
 
 def _state_get(state: Any, key: str, default: Any = None) -> Any:
     if isinstance(state, Mapping):
@@ -216,6 +217,8 @@ def _strip_progress_state_from_command(result: Any) -> Any:
     return Command(graph=result.graph, update=update, resume=result.resume, goto=result.goto)
 
 
+
+
 class PlanProgressMiddleware(AgentMiddleware[ProgressState, Any, Any]):
     state_schema = ProgressState
 
@@ -324,20 +327,31 @@ class PlanProgressMiddleware(AgentMiddleware[ProgressState, Any, Any]):
         )
         return None
 
-
+from langchain_core.runnables.config import ensure_config, get_callback_manager_for_config,set_config_context
+from langchain_core.runnables.config import var_child_runnable_config, RunnableConfig
 class SubAgentProgressMiddleware(AgentMiddleware[ProgressState, Any, Any]):
     state_schema = ProgressState
 
     def before_agent(self, state: ProgressState, runtime: Runtime[Any]) -> dict[str, Any] | None:
-        info = _subagent_info_from_state(state)
-        emit_progress(
-            ProgressEventType.Task.EXECUTING,
-            f"SubAgent 开始执行: {info.input_message}" if info else "SubAgent 开始执行",
-            node=_subagent_node(info),
-            task_name=info.input_message if info else None,
-            detail=_subagent_detail(info, state),
-        )
-        return None
+        current_config = ensure_config()
+        # 构造带有附加 metadata 的新 config
+        new_config: RunnableConfig = {
+            **current_config,
+            "metadata": {
+                **current_config.get("metadata", {}),
+                "subagent_id": "abc"
+            },
+        }
+        with set_config_context(new_config):
+            info = _subagent_info_from_state(state)
+            emit_progress(
+                ProgressEventType.Task.EXECUTING,
+                f"SubAgent 开始执行: {info.input_message}" if info else "SubAgent 开始执行",
+                node=_subagent_node(info),
+                task_name=info.input_message if info else None,
+                detail=_subagent_detail(info, state),
+            )
+            return None
 
     def _tool_event(self, tool_name: str) -> tuple[ProgressEventType, str]:
         if tool_name in _SEARCH_TOOL_NAMES or tool_name in {"tavily_search", "get_weather"}:
@@ -347,12 +361,31 @@ class SubAgentProgressMiddleware(AgentMiddleware[ProgressState, Any, Any]):
         if tool_name == "query_note":
             return ProgressEventType.Task.QUERYING_NOTE, "SubAgent 正在查询笔记"
         return ProgressEventType.Task.EXECUTING, f"SubAgent 正在调用工具: {tool_name}"
-
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        model=request.model
+        model.metadata={"subagent_id": "abc"}
+        return await handler(request.override(
+            model=model,
+        ))
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
         handler,
     ) -> Any:
+        current_config=ensure_config()
+        # 构造带有附加 metadata 的新 config
+        new_config: RunnableConfig = {
+            **current_config,
+            "metadata": {
+                **current_config.get("metadata", {}),
+                "subagent_id":"abc"
+            },
+        }
+        var_child_runnable_config.set(new_config)
         info = _subagent_info_from_state(request.state)
         tool_call = request.tool_call or {}
         tool_name = str(tool_call.get("name") or "")
@@ -376,7 +409,11 @@ class SubAgentProgressMiddleware(AgentMiddleware[ProgressState, Any, Any]):
         )
 
         try:
-            return await handler(request)
+            tool = request.tool
+            tool.metadata = {"subagent_id": "abc"}
+            return await handler(request.override(
+                tool=tool
+            ))
         except Exception as exc:
             emit_progress(
                 ProgressEventType.Run.ERROR,
