@@ -25,8 +25,8 @@ from typing import Any, Literal
 from src.agent.common.stream_events import (
     ProgressEventType,
     aemit_progress,
-    aemit_subagent_spawn,
 )
+from src.agent.common.view_types import ViewType
 from src.agent.common.utils.struct import (
     MonthlyDietPlan,
     PetDietPlan,
@@ -130,10 +130,9 @@ plan_agent_with_sub = create_deep_agent(
 
 async def generate_coordination_guide(state: State):
     await aemit_progress(
-        ProgressEventType.RESEARCH_FINALIZING,
+        ProgressEventType.Research.FINALIZING,
         "根据调研笔记生成四周差异化协调指南",
         node="generate_coordination_guide",
-        progress=30,
     )
     coordination_agent = create_agent(
         model=load_chat_model(ContextV2().plan_model),
@@ -163,21 +162,25 @@ async def dispatch_weeks(state: State) -> Command[Literal["week_agent"]]:
     ctx: ContextV2 = get_runtime().context
 
     await aemit_progress(
-        ProgressEventType.DISPATCHING,
+        ProgressEventType.Dispatch.STARTING,
         f"向 {len(guide.weekly_assignments)} 个并行 week_agent 分发任务",
         node="dispatch_weeks",
-        progress=40,
     )
 
     sends: list[Send] = []
     for assignment in guide.weekly_assignments:
-        # v2 GenUI: 触发前端 WeekParallelBlock inline 嵌入 (target=week_agent → view_type=week_dispatch)
-        await aemit_subagent_spawn(
+        task_name = getattr(assignment, "theme", None) or f"第{assignment.week_number}周"
+        await aemit_progress(
+            ProgressEventType.Task.DELEGATING,
+            f"委派 → week_agent: {task_name}",
             node="dispatch_weeks",
-            target="week_agent",
-            task_name=getattr(assignment, "theme", None) or f"第{assignment.week_number}周",
-            week_number=assignment.week_number,
-            progress=40,
+            task_name=task_name,
+            detail={
+                "view_type": ViewType.WEEK_DISPATCH.value,
+                "target": "week_agent",
+                "task_name": task_name,
+                "week_number": assignment.week_number,
+            },
         )
         sends.append(
             Send(
@@ -280,10 +283,9 @@ async def gather_and_structure(state: State):
     light_plans: list[WeekLightPlan] = list(state.get("week_light_plans") or [])
 
     await aemit_progress(
-        ProgressEventType.GATHERING,
+        ProgressEventType.Result.GATHERING,
         f"汇总 {len(light_plans)} 个轻量周计划，开始批量查询食材数据",
         node="gather_and_structure",
-        progress=80,
     )
 
     if not light_plans:
@@ -306,10 +308,9 @@ async def gather_and_structure(state: State):
     )
 
     await aemit_progress(
-        ProgressEventType.STRUCTURING,
+        ProgressEventType.Result.STRUCTURING,
         f"组装 4 周 WeeklyDietPlan（命中食材 {len(rows_by_name)}/{len(names)}）",
         node="gather_and_structure",
-        progress=88,
     )
 
     # 2) 并行组装每一周（纯 CPU，to_thread 不必要；直接在事件循环中同步调用即可）
@@ -322,10 +323,9 @@ async def gather_and_structure(state: State):
     ai_suggestions = await _generate_ai_suggestions(weekly_plans, ctx.summary_model)
 
     await aemit_progress(
-        ProgressEventType.STRUCTURED,
+        ProgressEventType.Result.STRUCTURED,
         "周计划结构化完成",
         node="gather_and_structure",
-        progress=95,
     )
 
     report = PetDietPlan(
@@ -340,14 +340,13 @@ async def gather_and_structure(state: State):
     ]
 
     await aemit_progress(
-        ProgressEventType.COMPLETED,
+        ProgressEventType.Result.COMPLETED,
         "月度饮食计划全部生成完成",
         node="gather_and_structure",
         detail={
             "plans": serialized_plans,
             "ai_suggestions": ai_suggestions,
         },
-        progress=100,
     )
 
     return {

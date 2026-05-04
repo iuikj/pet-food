@@ -10,6 +10,7 @@ from src.agent.v2.tools.nutrition_tools import (
     daily_calorie_tool,
     nutrition_requirement_tool,
 )
+from src.agent.v2.middlewares.progress_middleware import sub_agent_progress_middleware
 
 nutrition_calc_sub_agent = SubAgent(
     name="nutrition-calculator",
@@ -25,4 +26,5 @@ nutrition_calc_sub_agent = SubAgent(
         "(2) 微量营养素最低需求量 (nutrition_requirement_tool)。"
         "适用于需要了解宠物精确营养目标的场景。"
     ),
+    middleware=[sub_agent_progress_middleware],
 )

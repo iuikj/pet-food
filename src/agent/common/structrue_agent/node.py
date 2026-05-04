@@ -38,7 +38,7 @@ async def structure_report(state: StructState, config: RunnableConfig) -> Comman
         is_retry = bool(state.get("failed_reason"))
         if is_retry:
             await aemit_progress(
-                ProgressEventType.STRUCTURING_RETRY,
+                ProgressEventType.Result.RETRYING,
                 "结构化解析失败，正在重试...",
                 node="structure_report",
             )
@@ -50,7 +50,7 @@ async def structure_report(state: StructState, config: RunnableConfig) -> Comman
             )
         else:
             await aemit_progress(
-                ProgressEventType.STRUCTURING,
+                ProgressEventType.Result.STRUCTURING,
                 "正在解析饮食计划为结构化数据...",
                 node="structure_report",
             )
@@ -64,11 +64,10 @@ async def structure_report(state: StructState, config: RunnableConfig) -> Comman
             parsed_plan: WeeklyDietPlan = response.get("parsed")
             week_num = getattr(parsed_plan, "oder", None)
             await aemit_progress(
-                ProgressEventType.STRUCTURED,
+                ProgressEventType.Result.STRUCTURED,
                 f"第{week_num}周饮食计划解析完成" if week_num else "饮食计划解析完成",
                 node="structure_report",
                 detail={"week": week_num},
-                progress=85,
             )
             return Command(
                 goto="__end__",

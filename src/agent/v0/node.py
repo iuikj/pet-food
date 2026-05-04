@@ -29,10 +29,9 @@ async def call_model(state: State, config: RunnableConfig) -> Command[Literal["t
     # 首次调用（无 plan）时发送"正在创建计划"进度
     if not has_plan:
         await aemit_progress(
-            ProgressEventType.PLAN_CREATING,
+            ProgressEventType.Research.STARTING,
             "正在分析宠物信息，制定任务计划...",
             node="call_model",
-            progress=5,
         )
 
     model = load_chat_model(
@@ -76,28 +75,23 @@ async def call_model(state: State, config: RunnableConfig) -> Command[Literal["t
         # 根据工具调用类型发送对应进度事件
         if name == "write_plan":
             await aemit_progress(
-                ProgressEventType.PLAN_CREATED,
+                ProgressEventType.Plan.CREATED,
                 "任务计划已创建",
                 node="call_model",
-                progress=10,
             )
         elif name == "finish_sub_plan":
-            progress = _estimate_progress(state)
             await aemit_progress(
-                ProgressEventType.PLAN_UPDATED,
+                ProgressEventType.Plan.UPDATED,
                 "任务计划已更新",
                 node="call_model",
-                progress=progress,
             )
         elif name == "transfor_task_to_subagent":
             task_name = cast(dict, args).get("content", "") if isinstance(args, dict) else ""
-            progress = _estimate_progress(state)
             await aemit_progress(
-                ProgressEventType.TASK_DELEGATING,
+                ProgressEventType.Task.DELEGATING,
                 f"正在委派任务: {task_name}",
                 node="call_model",
                 task_name=task_name,
-                progress=progress,
             )
             return Command(
                 goto="subagent",
@@ -114,10 +108,9 @@ async def call_model(state: State, config: RunnableConfig) -> Command[Literal["t
     # 所有任务完成，进入结构化阶段
     notes: dict[str, Note] = state["note"]
     await aemit_progress(
-        ProgressEventType.GATHERING,
+        ProgressEventType.Result.GATHERING,
         "所有任务已完成，正在进入结构化解析阶段...",
         node="call_model",
-        progress=80,
     )
     return Command(
         goto=[Send(
@@ -130,27 +123,13 @@ async def call_model(state: State, config: RunnableConfig) -> Command[Literal["t
     )
 
 
-def _estimate_progress(state: State) -> int:
-    """根据 plan 完成情况估算当前进度 (10-80%)"""
-    plan = state.get("plan")
-    if not plan:
-        return 10
-    total = len(plan)
-    if total == 0:
-        return 10
-    done = sum(1 for item in plan if getattr(item, "status", None) == "done")
-    # 映射到 10-80 区间
-    return 10 + int((done / total) * 70)
-
-
 async def gather(state: State):
     weekly_plans = state.get("weekly_diet_plans", [])
     await aemit_progress(
-        ProgressEventType.COMPLETED,
+        ProgressEventType.Result.COMPLETED,
         f"月度饮食计划生成完成！共 {len(weekly_plans)} 周计划",
         node="gather",
         detail={"total_weeks": len(weekly_plans)},
-        progress=100,
     )
     return {
         "report": PetDietPlan(

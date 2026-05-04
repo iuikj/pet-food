@@ -10,8 +10,6 @@ from src.agent.common.entity.note import create_write_note_tool
 from src.agent.common.stream_events import (
     ProgressEventType,
     aemit_progress,
-    aemit_ai_message,
-    aemit_tool_call,
 )
 from src.agent.common.write_agent.state import WriteState
 
@@ -31,7 +29,7 @@ write_note = create_write_note_tool(
 
 async def write(state: WriteState, config: RunnableConfig):
     await aemit_progress(
-        ProgressEventType.NOTE_SAVING,
+        ProgressEventType.Note.SAVING,
         "正在保存任务笔记...",
         node="write_note",
     )
@@ -52,24 +50,8 @@ async def write(state: WriteState, config: RunnableConfig):
         ),
     )
 
-    # tool_choice 强制调用 write_note,response.tool_calls 必有一项 — 发 started 事件
-    # 让前端 NoteWriteWidget 渲染"保存笔记 [文件名]"卡片(含内容预览)。
-    tool_call_id = None
-    tool_args: dict = {}
-    if response.tool_calls:
-        tool_call_id = response.tool_calls[0].get("id")
-        tool_args = response.tool_calls[0].get("args") or {}
-
-    await aemit_tool_call(
-        node="write_note",
-        tool_name="write_note",
-        args=tool_args,
-        status="started",
-        call_id=tool_call_id,
-    )
-
     await aemit_progress(
-        ProgressEventType.NOTE_SAVED,
+        ProgressEventType.Note.SAVED,
         "笔记保存完成",
         node="write_note",
     )
@@ -81,7 +63,7 @@ async def write(state: WriteState, config: RunnableConfig):
 
 async def summary(state: WriteState, config: RunnableConfig):
     await aemit_progress(
-        ProgressEventType.SUMMARY_GENERATING,
+        ProgressEventType.Summary.GENERATING,
         "正在生成任务摘要...",
         node="write_note",
     )
@@ -103,15 +85,8 @@ async def summary(state: WriteState, config: RunnableConfig):
         ),
     )
 
-    # 摘要内容作为 AI 消息送给前端,与"保存笔记"卡片并列显示
-    await aemit_ai_message(
-        node="write_note",
-        content=response.content,
-        message_id=getattr(response, "id", None),
-    )
-
     await aemit_progress(
-        ProgressEventType.SUMMARY_GENERATED,
+        ProgressEventType.Summary.GENERATED,
         "任务摘要生成完成",
         node="write_note",
     )

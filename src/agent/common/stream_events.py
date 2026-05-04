@@ -27,8 +27,6 @@ from typing import Any, Optional
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel, Field
 
-from src.agent.common.view_types import ViewType
-
 logger = logging.getLogger(__name__)
 
 
@@ -44,13 +42,23 @@ def _deep_serialize(obj: Any) -> Any:
 
 
 class ProgressEventType(str, Enum):
-    """流式进度事件类型"""
+    """业务级流式进度事件类型。
 
-    # ── 主智能体 ──
+    事件 payload 的字符串值保持稳定，避免前端和历史 SSE 回放大规模迁移。
+    新代码优先用下方挂载的二级枚举入口，例如:
+    ``ProgressEventType.Research.STARTING``、``ProgressEventType.Week.PLANNING``。
+
+    AG-UI 标准 text / reasoning / tool events 不在这里重复定义。
+    """
+
+    # ── 主智能体 / 研究阶段 ──
     PLAN_CREATING = "plan_creating"
     PLAN_CREATED = "plan_created"
     PLAN_UPDATED = "plan_updated"
     TASK_DELEGATING = "task_delegating"
+    RESEARCH_STARTING = "research_starting"
+    RESEARCH_TASK_DELEGATING = "research_task_delegating"
+    RESEARCH_FINALIZING = "research_finalizing"
 
     # ── 子智能体 ──
     TASK_EXECUTING = "task_executing"
@@ -58,47 +66,105 @@ class ProgressEventType(str, Enum):
     TASK_QUERYING_NOTE = "task_querying_note"
     TASK_COMPLETED = "task_completed"
 
-    # ── 写入智能体 ──
+    # ── 写入 / 摘要 ──
     NOTE_SAVING = "note_saving"
     NOTE_SAVED = "note_saved"
     SUMMARY_GENERATING = "summary_generating"
     SUMMARY_GENERATED = "summary_generated"
 
-    # ── 结构化智能体 ──
-    STRUCTURING = "structuring"
-    STRUCTURING_RETRY = "structuring_retry"
-    STRUCTURED = "structured"
-
-    # ── 汇总 ──
-    GATHERING = "gathering"
-    COMPLETED = "completed"
-
-    # ── V1 架构: 研究阶段 ──
-    RESEARCH_STARTING = "research_starting"
-    RESEARCH_TASK_DELEGATING = "research_task_delegating"
-    RESEARCH_FINALIZING = "research_finalizing"
-
-    # ── V1 架构: 分发阶段 ──
+    # ── 分发 / 周计划并行阶段 ──
     DISPATCHING = "dispatching"
-
-    # ── V1 架构: 周计划并行阶段 ──
     WEEK_PLANNING = "week_planning"
     WEEK_SEARCHING = "week_searching"
-    WEEK_PLAN_READY = "week_plan_ready"
     WEEK_WRITING = "week_writing"
     WEEK_COMPLETED = "week_completed"
 
-    # ── 聊天式事件流（v2 GenUI 新增） ──
-    AI_MESSAGE = "ai_message"          # AI 文本输出（含可选 reasoning）
-    REASONING = "reasoning"            # 单独的思考流
-    TOOL_CALL = "tool_call"            # 工具调用 started/completed/error 三态合一
-    PLAN_SNAPSHOT = "plan_snapshot"    # deepagent 风格 todo 列表快照
-    SUBAGENT_SPAWN = "subagent_spawn"  # 任务委派给 subagent / week_agent
-    NOTE_OPERATION = "note_operation"  # 阅读 / 写入 / 更新笔记的统一入口（暂未单独使用，预留）
+    # 保留兼容值，不再从 v2 middleware 主动发送，避免 week_writing 重叠。
+    WEEK_PLAN_READY = "week_plan_ready"
+
+    # ── 汇总 / 结构化 ──
+    GATHERING = "gathering"
+    STRUCTURING = "structuring"
+    STRUCTURING_RETRY = "structuring_retry"
+    STRUCTURED = "structured"
+    COMPLETED = "completed"
 
     # ── 通用 ──
     ERROR = "error"
     INFO = "info"
+
+
+class _ResearchProgressEventType(str, Enum):
+    STARTING = ProgressEventType.RESEARCH_STARTING.value
+    TASK_DELEGATING = ProgressEventType.RESEARCH_TASK_DELEGATING.value
+    FINALIZING = ProgressEventType.RESEARCH_FINALIZING.value
+
+
+class _PlanProgressEventType(str, Enum):
+    CREATING = ProgressEventType.PLAN_CREATING.value
+    CREATED = ProgressEventType.PLAN_CREATED.value
+    UPDATED = ProgressEventType.PLAN_UPDATED.value
+
+
+class _AgentProgressEventType(str, Enum):
+    DELEGATING = ProgressEventType.TASK_DELEGATING.value
+
+
+class _TaskProgressEventType(str, Enum):
+    DELEGATING = ProgressEventType.TASK_DELEGATING.value
+    EXECUTING = ProgressEventType.TASK_EXECUTING.value
+    SEARCHING = ProgressEventType.TASK_SEARCHING.value
+    QUERYING_NOTE = ProgressEventType.TASK_QUERYING_NOTE.value
+    COMPLETED = ProgressEventType.TASK_COMPLETED.value
+
+
+class _NoteProgressEventType(str, Enum):
+    SAVING = ProgressEventType.NOTE_SAVING.value
+    SAVED = ProgressEventType.NOTE_SAVED.value
+
+
+class _SummaryProgressEventType(str, Enum):
+    GENERATING = ProgressEventType.SUMMARY_GENERATING.value
+    GENERATED = ProgressEventType.SUMMARY_GENERATED.value
+
+
+class _DispatchProgressEventType(str, Enum):
+    STARTING = ProgressEventType.DISPATCHING.value
+
+
+class _WeekProgressEventType(str, Enum):
+    PLANNING = ProgressEventType.WEEK_PLANNING.value
+    SEARCHING = ProgressEventType.WEEK_SEARCHING.value
+    WRITING = ProgressEventType.WEEK_WRITING.value
+    COMPLETED = ProgressEventType.WEEK_COMPLETED.value
+    PLAN_READY = ProgressEventType.WEEK_PLAN_READY.value
+
+
+class _ResultProgressEventType(str, Enum):
+    GATHERING = ProgressEventType.GATHERING.value
+    STRUCTURING = ProgressEventType.STRUCTURING.value
+    RETRYING = ProgressEventType.STRUCTURING_RETRY.value
+    STRUCTURED = ProgressEventType.STRUCTURED.value
+    COMPLETED = ProgressEventType.COMPLETED.value
+
+
+class _RunProgressEventType(str, Enum):
+    ERROR = ProgressEventType.ERROR.value
+    INFO = ProgressEventType.INFO.value
+
+
+# Python Enum 不能在类体内直接声明子 Enum；否则子类本身会变成一个枚举成员。
+# 这里在类创建后挂载，提供 ProgressEventType.Research.STARTING 这类二级调用入口。
+ProgressEventType.Research = _ResearchProgressEventType  # type: ignore[attr-defined]
+ProgressEventType.Plan = _PlanProgressEventType  # type: ignore[attr-defined]
+ProgressEventType.Agent = _AgentProgressEventType  # type: ignore[attr-defined]
+ProgressEventType.Task = _TaskProgressEventType  # type: ignore[attr-defined]
+ProgressEventType.Note = _NoteProgressEventType  # type: ignore[attr-defined]
+ProgressEventType.Summary = _SummaryProgressEventType  # type: ignore[attr-defined]
+ProgressEventType.Dispatch = _DispatchProgressEventType  # type: ignore[attr-defined]
+ProgressEventType.Week = _WeekProgressEventType  # type: ignore[attr-defined]
+ProgressEventType.Result = _ResultProgressEventType  # type: ignore[attr-defined]
+ProgressEventType.Run = _RunProgressEventType  # type: ignore[attr-defined]
 
 
 class ProgressEvent(BaseModel):
@@ -120,7 +186,7 @@ class ProgressEvent(BaseModel):
         对 detail 字段中可能包含的 Pydantic 模型进行递归序列化，
         确保最终输出全部为 JSON 可序列化的原生类型。
         """
-        data = self.model_dump()
+        data = self.model_dump(mode="json")
         if data.get("detail") is not None:
             data["detail"] = _deep_serialize(self.detail)
         return {k: v for k, v in data.items() if v is not None}
@@ -182,311 +248,6 @@ async def aemit_progress(
         await adispatch_custom_event(event_type.value, payload)
     except Exception:
         pass
-
-
-# ────────────────────────────────────────────────────────
-# 帮助函数：let 业务节点零认知负担发送高级别事件
-# ────────────────────────────────────────────────────────
-
-# message 字段的最大长度（聊天列表预览用，详情入 detail.content）
-_MESSAGE_PREVIEW_MAX = 120
-
-# tool_call result 字段的最大长度（移动端 SSE 帧体积保护）
-_TOOL_RESULT_MAX = 4000
-_TOOL_RESULT_MAX_LIST = 5
-
-
-def _truncate_preview(text: str | None, limit: int = _MESSAGE_PREVIEW_MAX) -> str:
-    if not text:
-        return ""
-    text = str(text).strip().replace("\n", " ")
-    if len(text) <= limit:
-        return text
-    return text[:limit] + "..."
-
-
-def _truncate_tool_result(result: Any) -> Any:
-    """避免 tavily_search 等工具结果撑爆 SSE 帧（移动端 webview 4-8KB 容易丢包）。"""
-    if result is None:
-        return None
-    if isinstance(result, str) and len(result) > _TOOL_RESULT_MAX:
-        return result[:_TOOL_RESULT_MAX] + "\n...(truncated)"
-    if isinstance(result, dict):
-        out = dict(result)
-        if isinstance(out.get("results"), list) and len(out["results"]) > _TOOL_RESULT_MAX_LIST:
-            out["results"] = out["results"][:_TOOL_RESULT_MAX_LIST]
-            out["_truncated"] = True
-        return out
-    if isinstance(result, list) and len(result) > _TOOL_RESULT_MAX_LIST:
-        return [*result[:_TOOL_RESULT_MAX_LIST], {"_truncated": True}]
-    return result
-
-
-# tool_name → ViewType 路由表（emit_tool_call 内部用）
-_TOOL_VIEW_MAP: dict[str, ViewType] = {
-    "tavily_search": ViewType.TOOL_SEARCH,
-    "query_note": ViewType.TOOL_NOTE_READ,
-    "ls": ViewType.TOOL_NOTE_READ,
-    "query_shared_note": ViewType.TOOL_NOTE_READ,
-    "write_note": ViewType.TOOL_NOTE_WRITE,
-    "week_write_note": ViewType.TOOL_NOTE_WRITE,
-    "update_note": ViewType.TOOL_NOTE_WRITE,
-}
-
-
-def _ai_message_args(
-    *,
-    node: str,
-    content: str,
-    reasoning: str | None = None,
-    message_id: str | None = None,
-    progress: int | None = None,
-    task_name: str | None = None,
-) -> tuple[ProgressEventType, str, dict] | None:
-    """构造 emit_ai_message 的 (event_type, message, kwargs)；空消息返回 None 让调用方 noop。"""
-    if not content and not reasoning:
-        return None
-    return (
-        ProgressEventType.AI_MESSAGE,
-        _truncate_preview(content or reasoning or ""),
-        dict(
-            node=node,
-            task_name=task_name,
-            progress=progress,
-            detail={
-                "view_type": ViewType.AI_MESSAGE.value,
-                "content": content or "",
-                "reasoning": reasoning,
-                "message_id": message_id,
-            },
-        ),
-    )
-
-
-def emit_ai_message(
-    *,
-    node: str,
-    content: str,
-    reasoning: str | None = None,
-    message_id: str | None = None,
-    progress: int | None = None,
-    task_name: str | None = None,
-) -> None:
-    """SYNC：发送 AI 文本输出事件（前端用 AIMessageWidget 渲染，下沉折叠）。"""
-    args = _ai_message_args(
-        node=node, content=content, reasoning=reasoning,
-        message_id=message_id, progress=progress, task_name=task_name,
-    )
-    if args is None:
-        return
-    et, msg, kw = args
-    emit_progress(et, msg, **kw)
-
-
-async def aemit_ai_message(
-    *,
-    node: str,
-    content: str,
-    reasoning: str | None = None,
-    message_id: str | None = None,
-    progress: int | None = None,
-    task_name: str | None = None,
-) -> None:
-    """ASYNC：同 emit_ai_message。"""
-    args = _ai_message_args(
-        node=node, content=content, reasoning=reasoning,
-        message_id=message_id, progress=progress, task_name=task_name,
-    )
-    if args is None:
-        return
-    et, msg, kw = args
-    await aemit_progress(et, msg, **kw)
-
-
-def _tool_call_args(
-    *,
-    node: str,
-    tool_name: str,
-    args: dict | None = None,
-    status: str = "started",
-    result: Any = None,
-    call_id: str | None = None,
-    task_name: str | None = None,
-) -> tuple[ProgressEventType, str, dict]:
-    view_type = _TOOL_VIEW_MAP.get(tool_name, ViewType.TOOL_CALL_GENERIC).value
-    detail: dict[str, Any] = {
-        "view_type": view_type,
-        "tool_name": tool_name,
-        "args": args or {},
-        "status": status,
-        "call_id": call_id or f"{tool_name}_{node}",
-    }
-    if result is not None:
-        detail["result"] = _truncate_tool_result(result)
-    return (
-        ProgressEventType.TOOL_CALL,
-        f"{tool_name}: {status}",
-        dict(node=node, task_name=task_name, detail=detail),
-    )
-
-
-def emit_tool_call(
-    *,
-    node: str,
-    tool_name: str,
-    args: dict | None = None,
-    status: str = "started",
-    result: Any = None,
-    call_id: str | None = None,
-    task_name: str | None = None,
-) -> None:
-    """SYNC：发送工具调用事件（前端按 tool_name 路由到定制 Widget）。
-
-    Args:
-        call_id: 唯一调用 ID。前端按 call_id 合并 started + completed 两条事件为同一卡片。
-                 若不传，会按 tool_name + node 生成；同节点同工具多次调用应显式传不同 call_id。
-    """
-    et, msg, kw = _tool_call_args(
-        node=node, tool_name=tool_name, args=args, status=status,
-        result=result, call_id=call_id, task_name=task_name,
-    )
-    emit_progress(et, msg, **kw)
-
-
-async def aemit_tool_call(
-    *,
-    node: str,
-    tool_name: str,
-    args: dict | None = None,
-    status: str = "started",
-    result: Any = None,
-    call_id: str | None = None,
-    task_name: str | None = None,
-) -> None:
-    """ASYNC：同 emit_tool_call。"""
-    et, msg, kw = _tool_call_args(
-        node=node, tool_name=tool_name, args=args, status=status,
-        result=result, call_id=call_id, task_name=task_name,
-    )
-    await aemit_progress(et, msg, **kw)
-
-
-def _plan_snapshot_args(
-    *,
-    node: str,
-    plan: list,
-    action: str = "snapshot",
-    progress: int | None = None,
-) -> tuple[ProgressEventType, str, dict]:
-    items = []
-    for it in plan or []:
-        if isinstance(it, dict):
-            items.append({
-                "content": it.get("content", str(it)),
-                "status": it.get("status", "pending"),
-            })
-        else:
-            items.append({
-                "content": getattr(it, "content", str(it)),
-                "status": getattr(it, "status", "pending"),
-            })
-    return (
-        ProgressEventType.PLAN_SNAPSHOT,
-        f"任务列表 {action}",
-        dict(
-            node=node,
-            progress=progress,
-            detail={
-                "view_type": ViewType.PLAN_BOARD.value,
-                "items": items,
-                "action": action,
-            },
-        ),
-    )
-
-
-def emit_plan_snapshot(
-    *,
-    node: str,
-    plan: list,
-    action: str = "snapshot",
-    progress: int | None = None,
-) -> None:
-    """SYNC：发送 deepagent 风格 todo 列表快照（前端用 PlanBoardWidget 渲染）。"""
-    et, msg, kw = _plan_snapshot_args(node=node, plan=plan, action=action, progress=progress)
-    emit_progress(et, msg, **kw)
-
-
-async def aemit_plan_snapshot(
-    *,
-    node: str,
-    plan: list,
-    action: str = "snapshot",
-    progress: int | None = None,
-) -> None:
-    """ASYNC：同 emit_plan_snapshot。"""
-    et, msg, kw = _plan_snapshot_args(node=node, plan=plan, action=action, progress=progress)
-    await aemit_progress(et, msg, **kw)
-
-
-def _subagent_spawn_args(
-    *,
-    node: str,
-    target: str,
-    task_name: str,
-    week_number: int | None = None,
-    progress: int | None = None,
-) -> tuple[ProgressEventType, str, dict]:
-    view_type = (
-        ViewType.WEEK_DISPATCH if target == "week_agent" else ViewType.SUBAGENT_DISPATCH
-    ).value
-    return (
-        ProgressEventType.SUBAGENT_SPAWN,
-        f"委派 → {target}: {task_name}",
-        dict(
-            node=node,
-            task_name=task_name,
-            progress=progress,
-            detail={
-                "view_type": view_type,
-                "target": target,
-                "task_name": task_name,
-                "week_number": week_number,
-            },
-        ),
-    )
-
-
-def emit_subagent_spawn(
-    *,
-    node: str,
-    target: str,
-    task_name: str,
-    week_number: int | None = None,
-    progress: int | None = None,
-) -> None:
-    """SYNC：发送任务委派事件（前端用 SubagentDispatchWidget 渲染）。"""
-    et, msg, kw = _subagent_spawn_args(
-        node=node, target=target, task_name=task_name,
-        week_number=week_number, progress=progress,
-    )
-    emit_progress(et, msg, **kw)
-
-
-async def aemit_subagent_spawn(
-    *,
-    node: str,
-    target: str,
-    task_name: str,
-    week_number: int | None = None,
-    progress: int | None = None,
-) -> None:
-    """ASYNC：同 emit_subagent_spawn。"""
-    et, msg, kw = _subagent_spawn_args(
-        node=node, target=target, task_name=task_name,
-        week_number=week_number, progress=progress,
-    )
-    await aemit_progress(et, msg, **kw)
 
 
 # ────────────────────────────────────────────────────────

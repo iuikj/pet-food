@@ -119,11 +119,11 @@ def emit_progress(event_type, message, **kwargs):
     except Exception: pass
 ```
 
-**已添加的 4 个高级 helper**：
-- `emit_ai_message(node, content, reasoning=None)` → `view_type=ai_message`
-- `emit_tool_call(node, tool_name, args, status, result, call_id)` → `view_type` 按 tool_name 路由
-- `emit_plan_snapshot(node, plan, action)` → `view_type=plan_board`
-- `emit_subagent_spawn(node, target, task_name, week_number)` → `view_type=subagent_dispatch` 或 `week_dispatch`
+**当前事件来源约定**：
+- 文本、reasoning、工具调用：走 AG-UI 标准 `TEXT_MESSAGE_* / REASONING_MESSAGE_* / TOOL_CALL_*`
+- todo：优先从 `STATE_SNAPSHOT/STATE_DELTA` 的 `state.todos` 投影为 `plan_board`
+- task subagent：`PlanProgressMiddleware.awrap_tool_call(task)` 发送 `detail.view_type=subagent_dispatch`
+- weekagent：`dispatch_weeks` 发送 `detail.view_type=week_dispatch`
 
 **`extract_reasoning(response: AIMessage) → (content, reasoning)`** 自动从 `additional_kwargs.reasoning_content` 或 `<think>...</think>` 抽 reasoning。
 
@@ -184,11 +184,14 @@ interface AgentSubscriber {
 **渲染**：
 1. 按 `timestamp` 升序排序
 2. 合并 `tool_call started/completed`（同 `call_id`）为同一卡片，用最新 `status`
-3. 检测第一个 `view_type === "week_dispatch"` 事件 → 在该位置插入虚拟节点 `{ _kind: 'week_block' }`
-4. 后续所有 `node` 匹配 `^week_agent_\d$` 的事件 → 不渲染到主流，吸附到 `weekBuckets[N]`
-5. 渲染：
+3. 检测 `view_type === "week_dispatch"` 事件 → 放入 `weekBuckets[N]`，主流只插入虚拟节点 `{ _kind: 'week_block' }`
+4. 检测 `view_type === "subagent_dispatch"` 事件 → 放入 `subagentBuckets[subagent_id]`，主流只插入虚拟节点 `{ _kind: 'subagent_block' }`
+5. 后续所有 `node` 匹配 `^week_agent_\d$` 的事件 → 不渲染到主流，吸附到 `weekBuckets[N]`
+6. 后续所有带 `detail.agent_scope="subagent"` + `detail.subagent_id` 的事件 → 不渲染到主流，吸附到 `subagentBuckets[subagent_id]`
+7. 渲染：
    - 普通事件 → `<WidgetSwitch event={ev} />`（按 `view_type` 路由 widget）
    - 虚拟 `week_block` → `<WeekParallelBlock buckets={weekBuckets} />`
+   - 虚拟 `subagent_block` → `<SubAgentParallelBlock cards={subagentCards} buckets={subagentBuckets} />`
 
 **核心算法**（伪代码）：
 
@@ -199,7 +202,10 @@ function organizeEvents(events) {
 
     const mainStream = [];
     const weekBuckets = { 1: [], 2: [], 3: [], 4: [] };
+    const subagentBuckets = {};
+    const subagentCards = new Map();
     let weekBlockInserted = false;
+    let subagentBlockInserted = false;
 
     for (const ev of merged) {
         const m = ev.node?.match(/^week_agent_(\d)$/);
@@ -209,17 +215,30 @@ function organizeEvents(events) {
             continue;
         }
 
-        // 第一个 week_dispatch → 主流当前位置插入嵌入块占位符
-        if (ev.detail?.view_type === 'week_dispatch' && !weekBlockInserted) {
-            mainStream.push(ev);                          // 仍渲染单条提示
-            mainStream.push({ _kind: 'week_block' });     // 虚拟节点
-            weekBlockInserted = true;
+        if (ev.detail?.view_type === 'week_dispatch') {
+            weekBuckets[ev.detail.week_number]?.push(ev);
+            if (!weekBlockInserted) {
+                mainStream.push({ _kind: 'week_block' });
+                weekBlockInserted = true;
+            }
+            continue;
+        }
+
+        if (ev.detail?.view_type === 'subagent_dispatch') {
+            const id = ev.detail.subagent_id || ev.detail.call_id;
+            subagentCards.set(id, { id, dispatchEvent: ev });
+            subagentBuckets[id] ||= [];
+            subagentBuckets[id].push(ev);
+            if (!subagentBlockInserted) {
+                mainStream.push({ _kind: 'subagent_block' });
+                subagentBlockInserted = true;
+            }
             continue;
         }
 
         mainStream.push(ev);
     }
-    return { mainStream, weekBuckets };
+    return { mainStream, weekBuckets, subagentBuckets, subagentCards: [...subagentCards.values()] };
 }
 ```
 
@@ -242,7 +261,7 @@ function organizeEvents(events) {
 - 标题：`第N周 · {主题标签}`
 - 状态 chip：从最后一条 `week_*` 事件派生（planning / searching / writing / completed）
 - 副标题：最后一条事件的 message
-- 进度条：取该周事件 progress 字段最大值
+- 进度条：不再渲染，AG-UI run 页面不消费百分比 progress
 - 默认折叠
 
 **WeekAgentCard 展开态**：
@@ -253,7 +272,7 @@ function organizeEvents(events) {
 </motion.div>
 ```
 
-子 TimelineFeed 不再有 week_dispatch 嵌入触发（因为 week 内部不会再 dispatch），所以表现为纯粹的 widget 列表。
+子 TimelineFeed 使用 `nested: true`，不再二次拆分 week/subagent block，所以表现为纯粹的 widget 列表。
 
 ### 3.4 不要做的事（红线）
 
@@ -286,88 +305,57 @@ function organizeEvents(events) {
 
 ### 4.2 实施位置
 
-#### A. PlanProgressMiddleware.awrap_model_call
+#### A. PlanProgressMiddleware.awrap_tool_call
 
-在 `response = await handler(request)` 之后追加：
+当前只在 deepagents `task` / subagent 类工具上发送业务自定义事件，不重复发送 AG-UI 标准工具事件：
 
 ```python
-# 1) 取最后一条 AIMessage,补发 ai_message 事件
-last_ai = _last_ai_message(response.result)
-if last_ai is not None:
-    content, reasoning = extract_reasoning(last_ai)
-    if content or reasoning:
-        emit_ai_message(
-            node="plan_agent",
-            content=content or "",
-            reasoning=reasoning,
-            message_id=getattr(last_ai, "id", None),
-        )
+info = SubAgentInfo(
+    input_message=tool_args["description"],
+    subagent_id=sha256(normalized_description)[:16],
+)
 
-# 2) 检测是否有 plan/todos 工具调用,从 args 提取 plan 列表发 plan_snapshot
-for call in (last_ai.tool_calls or []):
-    if call.get("name") in ("write_todos", "update_todos", "TodoWrite"):
-        todos_arg = call.get("args", {}).get("todos", [])
-        if todos_arg:
-            emit_plan_snapshot(
-                node="plan_agent",
-                plan=todos_arg,
-                action="updated" if call.get("name") == "update_todos" else "created",
-            )
+emit_progress(
+    ProgressEventType.Research.TASK_DELEGATING,
+    f"委派 -> {subagent_type}: {info.input_message}",
+    node="plan_agent",
+    detail={
+        "view_type": ViewType.SUBAGENT_DISPATCH.value,
+        "subagent_id": info.subagent_id,
+        "call_id": tool_call["id"],
+        "agent_scope": "subagent",
+    },
+)
 
-# 3) 检测 subagent 调用 (deepagents 的 task 工具)
-for call in (last_ai.tool_calls or []):
-    if call.get("name") == "task":
-        sub_name = call.get("args", {}).get("subagent_type", "subagent")
-        task_desc = call.get("args", {}).get("description", "")
-        emit_subagent_spawn(
-            node="plan_agent",
-            target=sub_name,
-            task_name=task_desc,
-        )
+request.state["is_subagent"] = True
+request.state["subagent_info"] = info
+request.state["parent_call_id"] = tool_call["id"]
 ```
 
-#### B. PlanProgressMiddleware.awrap_tool_call
+#### B. SubAgentProgressMiddleware
+
+子 agent 内部事件依赖 `ProgressState.subagent_info` 路由：
 
 ```python
-async def awrap_tool_call(self, request, handler):
-    tool_call = request.tool_call or {}
-    tool_name = str(tool_call.get("name") or "")
-    tool_args = tool_call.get("args") or {}
-    call_id = tool_call.get("id") or f"{tool_name}_plan_agent"
-
-    # 调用前 → started
-    emit_tool_call(
-        node="plan_agent",
-        tool_name=tool_name,
-        args=dict(tool_args),
-        status="started",
-        call_id=call_id,
-    )
-
-    try:
-        result = await handler(request)
-    except Exception as exc:
-        emit_tool_call(
-            node="plan_agent", tool_name=tool_name, args=dict(tool_args),
-            status="error", result=str(exc), call_id=call_id,
-        )
-        raise
-
-    # 调用后 → completed
-    result_content = getattr(result, "content", None) if hasattr(result, "content") else result
-    emit_tool_call(
-        node="plan_agent", tool_name=tool_name, args=dict(tool_args),
-        status="completed", result=result_content, call_id=call_id,
-    )
-    return result
+emit_progress(
+    ProgressEventType.Task.EXECUTING,
+    "SubAgent 开始执行",
+    node=f"subagent_{subagent_id}",
+    detail={"agent_scope": "subagent", "subagent_id": subagent_id},
+)
 ```
 
-#### C. WeekProgressMiddleware（同上，用 `node=self._node_name(week_number)`）
+#### C. WeekProgressMiddleware
+
+week agent 只发送业务 phase，不重复标准 `TOOL_CALL_*`：
 
 ```python
-# 在 awrap_model_call / awrap_tool_call 中,把 plan_agent 替换成 self._node_name(week_number)
-emit_ai_message(node=f"week_agent_{week_number}", content=..., reasoning=..., task_name=f"第{week_number}周饮食计划")
-emit_tool_call(node=f"week_agent_{week_number}", tool_name=tool_name, ...)
+emit_progress(
+    ProgressEventType.Week.SEARCHING,
+    "第 N 周：正在查询食材营养详情",
+    node=f"week_agent_{week_number}",
+    detail={"agent_scope": "week", "agent_id": f"week_agent_{week_number}"},
+)
 ```
 
 #### D. dispatch_weeks 节点
@@ -376,12 +364,17 @@ emit_tool_call(node=f"week_agent_{week_number}", tool_name=tool_name, ...)
 
 ```python
 for assignment in guide.weekly_assignments:
-    emit_subagent_spawn(
+    await aemit_progress(
+        ProgressEventType.Task.DELEGATING,
+        f"委派 -> week_agent: {task_name}",
         node="dispatch_weeks",
-        target="week_agent",
-        task_name=assignment.theme or f"第{assignment.week_number}周",
-        week_number=assignment.week_number,
-        progress=40,
+        task_name=task_name,
+        detail={
+            "view_type": ViewType.WEEK_DISPATCH.value,
+            "target": "week_agent",
+            "task_name": task_name,
+            "week_number": assignment.week_number,
+        },
     )
     sends.append(Send(...))
 ```
@@ -389,8 +382,8 @@ for assignment in guide.weekly_assignments:
 ### 4.3 风险与降级
 
 - 如果 `last_ai.tool_calls[N].get("name") == "task"` 在 deepagents 中不准（task 工具可能是不同名），降级用 substring 匹配（`"task" in name.lower() or "subagent" in name.lower()`）
-- 如果某个工具的 result 体积过大（如 tavily_search 多 KB），`emit_tool_call` 内部已截断 4KB
-- `plan_snapshot` 的 plan 数据结构以 deepagents 实际 todo schema 为准（`{content, status}` 已兼容 dict 与对象两种）
+- 工具 result 体积不由业务 middleware 承担，前端只消费 AG-UI 标准 `TOOL_CALL_RESULT`
+- `plan_snapshot` 优先来自 AG-UI state 的 `todos`，兼容 `write_todos/update_todos` 工具参数作为兜底
 
 ---
 
@@ -499,7 +492,10 @@ export function organizeEventsForTimeline(events) {
 
     const mainStream = [];
     const weekBuckets = { 1: [], 2: [], 3: [], 4: [] };
+    const subagentBuckets = {};
+    const subagentCards = new Map();
     let weekBlockInserted = false;
+    let subagentBlockInserted = false;
 
     for (const ev of merged) {
         const m = ev.node?.match(/^week_agent_(\d)$/);
@@ -510,14 +506,28 @@ export function organizeEventsForTimeline(events) {
 
         const isWeekDispatch = ev.detail?.view_type === 'week_dispatch';
         if (isWeekDispatch) {
-            // 把第一个 week_dispatch 视作触发器,后续的 week_dispatch (3 个) 也进主流但不再插入 block
-            mainStream.push(ev);
+            weekBuckets[Number(ev.detail?.week_number)]?.push(ev);
             if (!weekBlockInserted) {
                 mainStream.push({
                     _kind: 'week_block',
                     timestamp: ev.timestamp,
                 });
                 weekBlockInserted = true;
+            }
+            continue;
+        }
+
+        const isSubagentDispatch = ev.detail?.view_type === 'subagent_dispatch';
+        if (isSubagentDispatch) {
+            const id = ev.detail?.subagent_id || ev.detail?.call_id;
+            subagentCards.set(id, { id, dispatchEvent: ev });
+            (subagentBuckets[id] ||= []).push(ev);
+            if (!subagentBlockInserted) {
+                mainStream.push({
+                    _kind: 'subagent_block',
+                    timestamp: ev.timestamp,
+                });
+                subagentBlockInserted = true;
             }
             continue;
         }
@@ -622,8 +632,8 @@ npx ai-elements@latest add tool message reasoning plan task sources conversation
 | `tool_search` | `SearchToolWidget.jsx` | `<Tool>` + `<Sources>`（来源链接） | 提取 `result.results` |
 | `tool_note_read` | `NoteReadWidget.jsx` | `<Tool>` + `<Artifact>` 显示笔记 markdown | result string 直接喂 |
 | `tool_note_write` | `NoteWriteWidget.jsx` | `<Tool>` + `<Artifact>` | content 字符串 |
-| `plan_board` | `PlanBoardWidget.jsx`（自写 todo） | `<Plan>` + `<PlanContent>` + `<Task>` | items 数组喂给 Plan |
-| `subagent_dispatch` / `week_dispatch` | `SubagentDispatchWidget.jsx` | `<Suggestion>` 风格单行 | 保留自写也可 |
+| `plan_board` | `PlanBoardWidget.jsx` | AI Elements `<Queue>` | `state.todos/detail.items` 分组 |
+| `subagent_dispatch` / `week_dispatch` | `SubagentDispatchWidget.jsx` | AI Elements `<Queue>` | 只在对应 agent 卡片内部显示 |
 | `phase_marker` | `PhaseMarkerWidget.jsx` | `<Shimmer>`（动画文本）或保留自写 | message 字符串 |
 
 ### 6.3 适配 helper：`src/lib/aiElementsAdapter.js`
@@ -733,25 +743,26 @@ SlotValue<C> = C                          // 替换为另一个组件
 
 | # | 任务 | 验证 |
 |---|---|---|
-| 10 | `PlanProgressMiddleware.awrap_model_call` 加 emit_ai_message + emit_plan_snapshot + emit_subagent_spawn | DEV 控制台看到 `[AG-UI custom event] ai_message ...` |
-| 11 | `PlanProgressMiddleware.awrap_tool_call` 加 emit_tool_call started/completed | 浏览器 widget 看到 tavily_search / ingredient_search 调用过程 |
-| 12 | `WeekProgressMiddleware` 同步加 emit_ai_message + emit_tool_call | 第 N 周卡片展开后看到子事件流 |
-| 13 | `dispatch_weeks` 节点加 4 次 `emit_subagent_spawn(target='week_agent', week_number=N)` | 主流出现 `week_dispatch` 事件,触发 WeekParallelBlock 嵌入 |
+| 10 | `PlanProgressMiddleware.awrap_tool_call(task)` 发送 `subagent_dispatch` 并注入 `subagent_info` | Task 触发后出现 SubAgent 卡片 |
+| 11 | `SubAgentProgressMiddleware` 注册到 v2 subagents | 子 agent 内部事件进入对应 SubAgent 卡片 |
+| 12 | `WeekProgressMiddleware` 只发送 week phase 事件 | 第 N 周卡片展开后看到子事件流 |
+| 13 | `dispatch_weeks` 节点发送 4 次 `week_dispatch` | 主流出现 WeekParallelBlock，dispatch 行进入周卡片内部 |
 
 ### 8.3 验收
 
 最终用户体验链路：
 1. 进入 `/agui-plan` → Hero + 启动按钮
-2. 点击 → `/agui-plan/run` → PetHero 显示宠物 + 0% 进度环
+2. 点击 → `/agui-plan/run` → PetHero 显示宠物，不显示百分比进度条
 3. agent 启动后:
    - 主流第一条:`[phase] 研究阶段启动`（PhaseMarker）
-   - 紧接 `[ai] AI 思考输出 ▾`（AIMessage 折叠态）
+   - AI 文本用 AI Elements `Conversation/Message` 渲染
    - 多个 `[tool] ingredient_search ▾`（Tool 折叠态）
-   - 出现 `[plan_board]`（Plan 默认展开）
-4. dispatch 阶段 → 主流出现 inline `WeekParallelBlock` 4 张卡片
-5. 4 周并行运行,每张卡片实时刷新状态 chip + 进度条
-6. 用户点击任意一张展开 → 看到该周完整子事件流（同样的 chat-like 渲染）
-7. 全部完成 → 跳 `/agui-plan/result`
+   - todo/state 更新出现 AI Elements `Queue`
+4. task 工具触发 → 主流出现 inline `SubAgentParallelBlock`，每个 task 一个可展开 SubAgent 卡片
+5. dispatch 阶段 → 主流出现 inline `WeekParallelBlock` 4 张卡片
+6. 4 周并行运行，每张卡片实时刷新状态 chip
+7. 用户点击任意一张展开 → 看到该 agent 完整子事件流（同样的 chat-like 渲染）
+8. 全部完成 → 跳 `/agui-plan/result`
 
 ---
 
@@ -761,7 +772,7 @@ SlotValue<C> = C                          // 替换为另一个组件
 |---|---|---|
 | AI Elements 默认是 TSX，项目是 JSX | `npx ai-elements add` 安装出 .tsx 文件 vite 也能编译，但和项目风格不一致 | 安装后批量改后缀；或用 `--language jsx` 标志（如支持） |
 | AI Elements 的 Tool/Plan 强依赖 `streamdown` / `lucide-react` | 包体积增大 ~150KB | 树摇能去掉未使用部分；用 dynamic import 懒加载 result 页之外的部分 |
-| 后端 deepagents 的 `task` 工具名可能不是固定字符串 | emit_subagent_spawn 触发不稳 | 在 v2 实际跑一遍把所有 tool_call name 打日志，再对照修补 helper |
+| 后端 deepagents 的 `task` 工具名可能不是固定字符串 | subagent_dispatch 触发不稳 | `_is_subagent_tool()` 使用 `task/subagent/transfer/transfor` 兜底匹配 |
 | WeekParallelBlock 在窄屏（手机）展示拥挤 | 4 张卡片 2x2 → 手机 1 列 4 行，纵向滚动累 | grid-cols-1 sm:grid-cols-2 默认就处理了；卡片折叠态高度 < 100px |
 | `agent.subscribe.onCustomEvent` 的 event.value 序列化形式 | 后端发 dict，AG-UI 协议层可能转 JSON 字符串 | useAGUIPlanRunner 已加 `safeJsonParse` 兜底 |
 | 同 call_id 多次 emit 重复入队 | 时间流出现重复卡片 | seenKeysRef 已按 timestamp+node+type+call_id+status 去重 |
@@ -774,18 +785,18 @@ SlotValue<C> = C                          // 替换为另一个组件
 
 ## 附录 A：view_type → AI Element 组件 映射对照表
 
-| 后端 view_type | 来自 helper | AI Elements 主组件 | 适配函数 |
+| view_type | 事件来源 | AI Elements 主组件 | 适配函数 |
 |---|---|---|---|
-| `ai_message` | `emit_ai_message` | `<Message from="assistant">` + `<MessageContent>` + `<MessageResponse>` | 直接 content |
-| `reasoning` | `emit_ai_message(reasoning=...)` | `<Reasoning isStreaming={false}>` 折叠 | 直接 reasoning |
-| `tool_call_generic` | `emit_tool_call` 兜底 | `<Tool>` + `<ToolHeader>` + `<ToolContent>` + `<ToolInput>` + `<ToolOutput>` | `toToolUIPart()` |
-| `tool_search` | `emit_tool_call(tool_name=ingredient_search/tavily_search/...)` | `<Tool>` + `<Sources>` | `toToolUIPart` + `toAiSdkSources` |
-| `tool_note_read` | `emit_tool_call(tool_name=query_note/ls)` | `<Tool>` + `<Artifact>` | `toToolUIPart` + result.text |
-| `tool_note_write` | `emit_tool_call(tool_name=write_note/...)` | `<Tool>` + `<Artifact>` | 同上 |
-| `tool_food_calc` | `emit_tool_call(tool_name=daily_calorie_tool/...)` | `<Tool>` + 自定义营养小卡 | 解析 result |
-| `plan_board` | `emit_plan_snapshot` | `<Plan defaultOpen>` + `<PlanContent>` + `<Task>` × N | `toAiSdkPlan()` |
-| `subagent_dispatch` | `emit_subagent_spawn(target=...)` | 自建单行（border-l-4 + icon） | 直接渲染 |
-| `week_dispatch` | `emit_subagent_spawn(target=week_agent)` | **不渲染单条**，触发 `<WeekParallelBlock>` 插入 | 流分发算法消化 |
+| `ai_message` | AG-UI `TEXT_MESSAGE_*` 标准事件 | `<Message from="assistant">` + `<MessageContent>` | 直接 content |
+| `reasoning` | AG-UI `REASONING_MESSAGE_*` 标准事件 | `<Reasoning isStreaming={...}>` 折叠 | 直接 reasoning |
+| `tool_call_generic` | AG-UI `TOOL_CALL_*` 标准事件兜底 | `<Tool>` + `<ToolHeader>` + `<ToolContent>` + `<ToolInput>` + `<ToolOutput>` | `toToolUIPart()` |
+| `tool_search` | AG-UI `TOOL_CALL_*`，按 tool_name 路由 | `<Tool>` + `<Sources>` | `toToolUIPart` + `toAiSdkSources` |
+| `tool_note_read` | AG-UI `TOOL_CALL_*`，按 tool_name 路由 | `<Tool>` + note read widget | `toToolUIPart` + result.text |
+| `tool_note_write` | AG-UI `TOOL_CALL_*`，按 tool_name 路由 | `<Tool>` + note write widget | 同上 |
+| `tool_food_calc` | AG-UI `TOOL_CALL_*`，按 tool_name 路由 | `<Tool>` + 自定义营养小卡 | 解析 result |
+| `plan_board` | AG-UI `STATE_SNAPSHOT/STATE_DELTA` 的 `state.todos` | AI Elements `<Queue>` | `toQueueSections()` |
+| `subagent_dispatch` | `PlanProgressMiddleware.awrap_tool_call(task)` | **不渲染到主流**，触发 `<SubAgentParallelBlock>` 插入，并作为卡片内首条事件 | `subagent_id` 分桶 |
+| `week_dispatch` | `dispatch_weeks` for-loop | **不渲染到主流**，触发 `<WeekParallelBlock>` 插入，并作为周卡片内首条事件 | `week_number` 分桶 |
 | `phase_marker` | 各种 phase 事件兜底 | `<Shimmer>` 或 `<MessageActions>` 单行 | message 字符串 |
 
 ---
@@ -796,11 +807,11 @@ SlotValue<C> = C                          // 替换为另一个组件
 
 | middleware / 节点 | 钩子 | 新增调用 |
 |---|---|---|
-| `PlanProgressMiddleware` | `awrap_model_call`（response 后） | `emit_ai_message(node="plan_agent", ...)` + `emit_plan_snapshot` + `emit_subagent_spawn` |
-| `PlanProgressMiddleware` | `awrap_tool_call`（前 + 后） | `emit_tool_call(status="started"/"completed", ...)` |
-| `WeekProgressMiddleware` | `awrap_model_call`（response 后） | `emit_ai_message(node=f"week_agent_{N}", ...)` |
-| `WeekProgressMiddleware` | `awrap_tool_call`（前 + 后） | `emit_tool_call(node=f"week_agent_{N}", ...)` |
-| `dispatch_weeks` 节点 | for-loop 内（Send 之前） | `emit_subagent_spawn(target="week_agent", week_number=N)` × 4 |
+| `PlanProgressMiddleware` | `awrap_tool_call(task)`（handler 前） | `research_task_delegating` + `detail.view_type=subagent_dispatch` + `detail.subagent_id` |
+| `PlanProgressMiddleware` | `awrap_tool_call(task)`（handler 后） | `task_completed` + 同一个 `call_id/subagent_id`，前端合并完成态 |
+| `SubAgentProgressMiddleware` | `before_agent / awrap_tool_call / after_agent` | `node=subagent_{subagent_id}` 的子 agent 内部事件流 |
+| `WeekProgressMiddleware` | `before_agent / awrap_tool_call / awrap_model_call / after_agent` | `node=week_agent_{N}` 的周 agent 内部事件流 |
+| `dispatch_weeks` 节点 | for-loop 内（Send 之前） | `task_delegating` + `detail.view_type=week_dispatch` + `week_number=N` × 4 |
 
 ---
 
@@ -809,7 +820,7 @@ SlotValue<C> = C                          // 替换为另一个组件
 | 已就绪 | 文件 | 说明 |
 |---|---|---|
 | emit_progress 双发 | `common/stream_events.py` | 双通道发送，已实测 AG-UI 收到 CUSTOM 事件 |
-| 4 个 helper | 同上 | `emit_ai_message` / `emit_tool_call` / `emit_plan_snapshot` / `emit_subagent_spawn` 已就绪，等 §4 在 progress_middleware 中调用 |
+| ProgressEventType 二级枚举 | 同上 | 保持旧字符串值，代码用 `ProgressEventType.Research.STARTING` 等入口 |
 | `extract_reasoning` | 同上 | 自动抽 qwen3 thinking / `<think>` |
 | 协议适配层 | `src/api/agui_agent.py` | dataclass context 注入 + reasoning role 过滤 + forwardedProps 业务字段透传 |
 | 闭包 box | `frontend/utils/contextualHttpAgent.js` | `setForwardedProps` 让所有 clone agent 看到最新值（Pit 13） |
