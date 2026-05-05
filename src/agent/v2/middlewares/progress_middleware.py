@@ -3,7 +3,7 @@ LangChain v1.2+ 业务进度 middleware。
 
 这个 middleware 只负责 AG-UI 标准协议无法直接表达的业务阶段提示：
 - plan_agent 生命周期：研究启动、task subagent 委派、研究完成
-- task subagent 生命周期：子任务启动、业务工具阶段、子任务完成
+- task subagent 生命周期：子任务启动、子任务完成；内部消息/推理/工具调用走 AG-UI 标准事件
 - week_agent 生命周期：周计划启动、业务工具阶段、撰写阶段、周计划完成
 
 不在这里做的事：
@@ -52,10 +52,12 @@ class SubAgentInfo(BaseModel):
     input_message: str = Field(
         description="作为subagent被传入的第一条human message就是task 工具创建对应的description;用这个来区分不同的subagent"
     )
+    #TODO:对于这个在before agent做个计算返回就可以
     subagent_id: str = Field(description="将input_message hash,使得前后端得以匹配")
 
 
 class ProgressState(AgentState, total=False):
+    # 只留这些的实际作用
     is_subagent: NotRequired[bool]
     subagent_info: NotRequired[SubAgentInfo]
     # parent_call_id: NotRequired[str]
@@ -63,8 +65,9 @@ class ProgressState(AgentState, total=False):
     # week_assignment: NotRequired[Any]
     # structured_response: NotRequired[Any]
     # week_light_plans: NotRequired[Any]
-    # 只留这些,这个state是拓展而已
+    # TODO:这个state是拓展而已
 
+#TODO:删掉,脱裤子放屁,直接state.get()就可以了
 def _state_get(state: Any, key: str, default: Any = None) -> Any:
     if isinstance(state, Mapping):
         return state.get(key, default)
@@ -327,116 +330,66 @@ class PlanProgressMiddleware(AgentMiddleware[ProgressState, Any, Any]):
         )
         return None
 
-from langchain_core.runnables.config import ensure_config, get_callback_manager_for_config,set_config_context
-from langchain_core.runnables.config import var_child_runnable_config, RunnableConfig
+#
+# def _subagent_metadata(info: SubAgentInfo | None, state: Any = None) -> dict[str, Any]:
+#     detail = _subagent_detail(info, state)
+#     detail["is_subagent"] = True
+#     return detail
+#
+#
+# def _with_metadata(obj: Any, metadata: Mapping[str, Any]) -> Any:
+#     if obj is None:
+#         return None
+#     metadata = {
+#         **(getattr(obj, "metadata", None) or {}),
+#         **dict(metadata),
+#     }
+#     try:
+#         obj.metadata = metadata
+#     except Exception:
+#         return obj
+#     return obj
+
+
 class SubAgentProgressMiddleware(AgentMiddleware[ProgressState, Any, Any]):
     state_schema = ProgressState
 
     def before_agent(self, state: ProgressState, runtime: Runtime[Any]) -> dict[str, Any] | None:
-        current_config = ensure_config()
-        # 构造带有附加 metadata 的新 config
-        new_config: RunnableConfig = {
-            **current_config,
-            "metadata": {
-                **current_config.get("metadata", {}),
-                "subagent_id": "abc"
-            },
+        # TODO根据之前说的做hash,前后端一致
+        sub_info=state['subagent_info']
+        sub_info.subagent_id="做计算"
+        return {
+            "subagent_info": sub_info,
         }
-        with set_config_context(new_config):
-            info = _subagent_info_from_state(state)
-            emit_progress(
-                ProgressEventType.Task.EXECUTING,
-                f"SubAgent 开始执行: {info.input_message}" if info else "SubAgent 开始执行",
-                node=_subagent_node(info),
-                task_name=info.input_message if info else None,
-                detail=_subagent_detail(info, state),
-            )
-            return None
 
-    def _tool_event(self, tool_name: str) -> tuple[ProgressEventType, str]:
-        if tool_name in _SEARCH_TOOL_NAMES or tool_name in {"tavily_search", "get_weather"}:
-            return ProgressEventType.Task.SEARCHING, "SubAgent 正在检索信息"
-        if tool_name in _CALC_TOOL_NAMES:
-            return ProgressEventType.Task.EXECUTING, "SubAgent 正在计算营养目标"
-        if tool_name == "query_note":
-            return ProgressEventType.Task.QUERYING_NOTE, "SubAgent 正在查询笔记"
-        return ProgressEventType.Task.EXECUTING, f"SubAgent 正在调用工具: {tool_name}"
     async def awrap_model_call(
         self,
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        model=request.model
-        model.metadata={"subagent_id": "abc"}
-        return await handler(request.override(
-            model=model,
-        ))
+        model = request.model
+        info:SubAgentInfo=request.state.get("subagent_info")
+        model.metadata={
+            "subagent_id":info.subagent_id
+        }
+        return await handler(request.override(model=model))
+
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
         handler,
     ) -> Any:
-        current_config=ensure_config()
-        # 构造带有附加 metadata 的新 config
-        new_config: RunnableConfig = {
-            **current_config,
-            "metadata": {
-                **current_config.get("metadata", {}),
-                "subagent_id":"abc"
-            },
+        tool=request.tool
+        info: SubAgentInfo = request.state.get("subagent_info")
+        tool.metadata = {
+            "subagent_id": info.subagent_id
         }
-        var_child_runnable_config.set(new_config)
-        info = _subagent_info_from_state(request.state)
-        tool_call = request.tool_call or {}
-        tool_name = str(tool_call.get("name") or "")
-        tool_args = tool_call.get("args") or {}
-        if not isinstance(tool_args, Mapping):
-            tool_args = {}
-
-        event_type, message = self._tool_event(tool_name)
-        emit_progress(
-            event_type,
-            message,
-            node=_subagent_node(info),
-            task_name=info.input_message if info else None,
-            detail=_subagent_detail(
-                info,
-                request.state,
-                tool_name=tool_name,
-                tool_args=dict(tool_args),
-                call_id=tool_call.get("id"),
-            ),
-        )
-
-        try:
-            tool = request.tool
-            tool.metadata = {"subagent_id": "abc"}
-            return await handler(request.override(
-                tool=tool
-            ))
-        except Exception as exc:
-            emit_progress(
-                ProgressEventType.Run.ERROR,
-                f"[{_subagent_node(info)}] 工具调用失败({tool_name}): {exc}",
-                node=_subagent_node(info),
-                task_name=info.input_message if info else None,
-                detail=_subagent_detail(
-                    info,
-                    request.state,
-                    tool_name=tool_name,
-                    call_id=tool_call.get("id"),
-                ),
-            )
-            raise
+        return await handler(request.override(tool=tool))
 
     def after_agent(self, state: ProgressState, runtime: Runtime[Any]) -> dict[str, Any] | None:
-        info = _subagent_info_from_state(state)
         emit_progress(
             ProgressEventType.Task.COMPLETED,
-            f"SubAgent 执行完成: {info.input_message}" if info else "SubAgent 执行完成",
-            node=_subagent_node(info),
-            task_name=info.input_message if info else None,
-            detail=_subagent_detail(info, state),
+            f"SubAgent 执行完成:",
         )
         return None
 
@@ -537,14 +490,14 @@ class WeekProgressMiddleware(AgentMiddleware[ProgressState, Any, Any]):
     ) -> ModelResponse[ResponseT]:
         week_number = _extract_week_number(request.state)
 
-        if _has_tool_messages(request.state):
-            self._emit_week_event(
-                ProgressEventType.Week.WRITING,
-                f"第{week_number}周：正在整合工具结果并撰写周计划"
-                if week_number is not None
-                else "正在整合工具结果并撰写周计划",
-                week_number=week_number,
-            )
+        # if _has_tool_messages(request.state):
+        #     self._emit_week_event(
+        #         ProgressEventType.Week.WRITING,
+        #         f"第{week_number}周：正在整合工具结果并撰写周计划"
+        #         if week_number is not None
+        #         else "正在整合工具结果并撰写周计划",
+        #         week_number=week_number,
+        #     )
 
         try:
             response = await handler(request)
