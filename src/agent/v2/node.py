@@ -40,7 +40,6 @@ from src.agent.v2.middlewares.dynamic_prompt_middleware import (
     week_agent_prompt,
 )
 from src.agent.v2.middlewares.progress_middleware import (
-    plan_progress_middleware,
     week_progress_middleware,
 )
 from src.agent.v2.middlewares.trigger_middleware import (
@@ -120,7 +119,7 @@ plan_agent_with_sub = create_deep_agent(
     ],
     backend=_make_backend(),
     skills=["/skills/"],
-    middleware=[plan_agent_prompt, trigger_plan_agent, plan_progress_middleware],
+    middleware=[plan_agent_prompt, trigger_plan_agent],
     context_schema=ContextV2,
     # store=AsyncPostgresStore()
 )

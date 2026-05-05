@@ -35,7 +35,7 @@ from src.utils.strtuct import PetInformation
 
 # ── 模型配置默认常量（供 node.py 模块加载时直接读取，避免 Pydantic 字段 FieldInfo 包装）──
 DEFAULT_PLAN_MODEL = "dashscope:qwen3.5-plus"
-DEFAULT_SUB_MODEL = "dashscope:qwen3.6-plus"
+DEFAULT_SUB_MODEL = "dashscope:qwen3.5-plus"
 DEFAULT_WRITE_MODEL = "dashscope:qwen-flash"
 DEFAULT_SUMMARY_MODEL = "dashscope:qwen-flash"
 DEFAULT_REPORT_MODEL = "dashscope:qwen3.5-plus"
