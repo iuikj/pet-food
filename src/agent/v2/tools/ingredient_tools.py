@@ -6,6 +6,7 @@
 使用同步 psycopg2 驱动，线程安全。
 """
 import json
+from enum import Enum
 from typing import Annotated, Optional
 
 from langchain.tools import tool
@@ -13,6 +14,11 @@ from sqlalchemy import select, func
 
 from src.db.models import Ingredient
 from src.agent.v2.tools.db import run_query
+from src.agent.v2.tools.ingredient_filters import (
+    IngredientCategory,
+    IngredientSearchInput,
+    IngredientSubCategory,
+)
 
 
 # ──────────────────────────── 辅助函数 ────────────────────────────
@@ -73,35 +79,48 @@ def _row_to_dict(row, detail: bool = False) -> dict:
     return base
 
 
+def _enum_value(value: str | Enum | None) -> str | None:
+    """Normalize enum inputs before passing them to SQLAlchemy."""
+    if value is None:
+        return None
+    if isinstance(value, Enum):
+        return value.value
+    return value
+
+
 # ──────────────────────────── 工具定义 ────────────────────────────
 
-@tool
+@tool(args_schema=IngredientSearchInput)
 async def ingredient_search_tool(
-    keyword: Annotated[Optional[str], "食材名称关键词(模糊匹配)，如'鸡''三文鱼'"] = None,
-    category: Annotated[Optional[str], "大类别，如'白肉''红肉''内脏''海鲜''蔬菜''水果''蛋类''骨头'"] = None,
-    sub_category: Annotated[Optional[str], "小类别，如'鸡''牛''猪''鸭'"] = None,
-    protein_min: Annotated[Optional[float], "蛋白质最小值(g/100g)"] = None,
-    protein_max: Annotated[Optional[float], "蛋白质最大值(g/100g)"] = None,
-    fat_min: Annotated[Optional[float], "脂肪最小值(g/100g)"] = None,
-    fat_max: Annotated[Optional[float], "脂肪最大值(g/100g)"] = None,
-    calcium_min: Annotated[Optional[float], "钙最低值(mg/100g)"] = None,
-    taurine_min: Annotated[Optional[float], "牛磺酸最低值(mg/100g)，猫粮选材常用"] = None,
-    limit: Annotated[int, "返回条数上限"] = 20,
+    keyword: Optional[str] = None,
+    category: Optional[IngredientCategory] = None,
+    sub_category: Optional[IngredientSubCategory] = None,
+    protein_min: Optional[float] = None,
+    protein_max: Optional[float] = None,
+    fat_min: Optional[float] = None,
+    fat_max: Optional[float] = None,
+    calcium_min: Optional[float] = None,
+    taurine_min: Optional[float] = None,
+    limit: int = 20,
 ) -> list[dict]:
     """按条件组合搜索食材数据库。所有营养素数值基于每 100g 可食部分。
 
-    支持按类别、关键词、营养素范围等多种筛选条件组合查询。
+    支持按关键词、枚举类别、枚举子类别、营养素范围等多种筛选条件组合查询。
+    类别和子类别必须来自当前 ingredients 表已有分类；无效组合会在查询前被拒绝。
     返回摘要信息（名称、类别、热量、三大营养素），
     如需完整营养数据请使用 ingredient_detail_tool。
     """
+    category_value = _enum_value(category)
+    sub_category_value = _enum_value(sub_category)
+
     stmt = select(Ingredient).where(Ingredient.has_nutrition_data.is_(True))
 
     if keyword:
         stmt = stmt.where(Ingredient.name.ilike(f"%{keyword}%"))
-    if category:
-        stmt = stmt.where(Ingredient.category == category)
-    if sub_category:
-        stmt = stmt.where(Ingredient.sub_category == sub_category)
+    if category_value:
+        stmt = stmt.where(Ingredient.category == category_value)
+    if sub_category_value:
+        stmt = stmt.where(Ingredient.sub_category == sub_category_value)
     if protein_min is not None:
         stmt = stmt.where(Ingredient.protein >= protein_min)
     if protein_max is not None:
@@ -123,10 +142,10 @@ async def ingredient_search_tool(
     filters = []
     if keyword:
         filters.append(f"关键词='{keyword}'")
-    if category:
-        filters.append(f"类别='{category}'")
-    if sub_category:
-        filters.append(f"子类别='{sub_category}'")
+    if category_value:
+        filters.append(f"类别='{category_value}'")
+    if sub_category_value:
+        filters.append(f"子类别='{sub_category_value}'")
     if protein_min is not None:
         filters.append(f"蛋白质≥{protein_min}g")
     if fat_max is not None:
