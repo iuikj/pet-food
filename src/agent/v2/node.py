@@ -33,7 +33,7 @@ from src.agent.common.utils.struct import (
     WeeklyDietPlan,
 )
 from src.agent.v1.models import CoordinationGuide
-from src.agent.v2.middlewares.ban_subagent_middleware import ban_sub_agent
+
 from src.agent.v2.middlewares.dynamic_prompt_middleware import (
     plan_agent_prompt,
     coordination_agent_prompt,
