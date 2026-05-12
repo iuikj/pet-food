@@ -104,13 +104,10 @@ async def test_v2_gather_and_structure_emits_completed_payload(monkeypatch):
     monkeypatch.setattr(v2_node, "_generate_ai_suggestions", fake_generate_ai_suggestions)
     monkeypatch.setattr(v2_node, "MonthlyDietPlan", lambda **kwargs: kwargs)
     monkeypatch.setattr(v2_node, "PetDietPlan", lambda **kwargs: kwargs)
-    monkeypatch.setattr(
-        v2_node,
-        "emit_progress",
-        lambda event_type, message, **kwargs: events.append(
-            {"type": event_type, "message": message, **kwargs}
-        ),
-    )
+    async def fake_aemit_progress(event_type, message, **kwargs):
+        events.append({"type": event_type, "message": message, **kwargs})
+
+    monkeypatch.setattr(v2_node, "aemit_progress", fake_aemit_progress)
 
     result = await v2_node.gather_and_structure(
         {
@@ -121,8 +118,7 @@ async def test_v2_gather_and_structure_emits_completed_payload(monkeypatch):
         }
     )
 
-    completed_event = next(event for event in events if event["type"] == ProgressEventType.COMPLETED)
+    completed_event = next(event for event in events if event["type"] == ProgressEventType.Result.COMPLETED)
     assert completed_event["detail"]["ai_suggestions"] == "保持饮水，逐步过渡。"
     assert [plan["oder"] for plan in completed_event["detail"]["plans"]] == [1, 2]
     assert result["report"]["ai_suggestions"] == "保持饮水，逐步过渡。"
-

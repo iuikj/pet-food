@@ -7,7 +7,10 @@ from langgraph.prebuilt import ToolNode
 
 from src.agent.common.context import resolve_subgraph_context
 from src.agent.common.entity.note import create_write_note_tool
-from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.stream_events import (
+    ProgressEventType,
+    aemit_progress,
+)
 from src.agent.common.write_agent.state import WriteState
 
 # 在模块级别创建工具实例
@@ -25,8 +28,8 @@ write_note = create_write_note_tool(
 
 
 async def write(state: WriteState, config: RunnableConfig):
-    emit_progress(
-        ProgressEventType.NOTE_SAVING,
+    await aemit_progress(
+        ProgressEventType.Note.SAVING,
         "正在保存任务笔记...",
         node="write_note",
     )
@@ -47,8 +50,8 @@ async def write(state: WriteState, config: RunnableConfig):
         ),
     )
 
-    emit_progress(
-        ProgressEventType.NOTE_SAVED,
+    await aemit_progress(
+        ProgressEventType.Note.SAVED,
         "笔记保存完成",
         node="write_note",
     )
@@ -59,8 +62,8 @@ async def write(state: WriteState, config: RunnableConfig):
 
 
 async def summary(state: WriteState, config: RunnableConfig):
-    emit_progress(
-        ProgressEventType.SUMMARY_GENERATING,
+    await aemit_progress(
+        ProgressEventType.Summary.GENERATING,
         "正在生成任务摘要...",
         node="write_note",
     )
@@ -82,8 +85,8 @@ async def summary(state: WriteState, config: RunnableConfig):
         ),
     )
 
-    emit_progress(
-        ProgressEventType.SUMMARY_GENERATED,
+    await aemit_progress(
+        ProgressEventType.Summary.GENERATED,
         "任务摘要生成完成",
         node="write_note",
     )

@@ -1,10 +1,9 @@
 from deepagents import SubAgent, CompiledSubAgent
-
-from src.agent.common.sub_agent.graph import build_sub_agent
 from src.agent.common.tools import tavily_search
-from src.agent.v2.middlewares.note_middleware import NoteMiddleware
 from src.agent.v2.middlewares.dynamic_prompt_middleware import sub_agent_prompt
-from deepagents.middleware.filesystem import FilesystemMiddleware
+from src.agent.v2.middlewares.progress_middleware import sub_agent_progress_middleware
+# from src.agent.v2.node import _make_backend
+
 
 websearch_sub_agent=SubAgent(
     name="general-purpose",
@@ -14,7 +13,21 @@ websearch_sub_agent=SubAgent(
     这是一个网络搜索子agent，用于搜索网络信息。
     """,
     middleware=[
+        sub_agent_progress_middleware,
         sub_agent_prompt
     ]
 )
 
+
+# CompiledSubAgent(
+#     name="general-purpose",
+#     description="""
+#     这是一个网络搜索子agent，用于搜索网络信息。
+#     """,
+#     runnable=create_agent(
+#         tools=[tavily_search]
+#     ),
+#     middleware=[
+#         sub_agent_prompt
+#     ]
+# )

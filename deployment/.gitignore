@@ -23,3 +23,7 @@ nginx/ssl/accounts/
 *.log
 logs/
 .cd-state/
+
+# ─── 本地敏感副本（含真实 token / 私钥 / 服务器实际配置）───
+# 部署文档"含 token 真实版"留本地用，远端只保留 <YOUR_GITHUB_PAT> 占位版
+.private/

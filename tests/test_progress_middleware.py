@@ -2,19 +2,18 @@ from types import SimpleNamespace
 
 import pytest
 from langchain.agents.middleware.types import ModelRequest, ModelResponse, ToolCallRequest
-from langchain.messages import AIMessage
+from langchain.messages import AIMessage, HumanMessage
 from langchain_core.messages import ToolMessage
 from langgraph.runtime import Runtime
 
 from src.agent.common.stream_events import ProgressEventType
+from src.agent.common.view_types import ViewType
 from src.agent.v2.middlewares import progress_middleware as progress_module
 
 
 @pytest.fixture(autouse=True)
-def reset_progress_trackers(monkeypatch):
-    progress_module._TRACKERS.clear()
+def reset_progress_events(monkeypatch):
     yield
-    progress_module._TRACKERS.clear()
 
 
 def _week_state(week_number: int, **extra):
@@ -25,60 +24,68 @@ def _week_state(week_number: int, **extra):
 
 
 @pytest.mark.asyncio
-async def test_plan_progress_emits_research_lifecycle(monkeypatch):
+async def test_subagent_progress_emits_lifecycle_and_metadata(monkeypatch):
     events = []
-    monkeypatch.setattr(progress_module, "_safe_run_key", lambda: "plan-run")
     monkeypatch.setattr(progress_module, "emit_progress", lambda event_type, message, **kwargs: events.append({
         "type": event_type,
         "message": message,
         **kwargs,
     }))
 
-    middleware = progress_module.PlanProgressMiddleware()
+    middleware = progress_module.SubAgentProgressMiddleware()
     runtime = Runtime(context=None)
-    middleware.before_agent({"messages": []}, runtime)
+    state = {
+        "messages": [HumanMessage(content="调研低敏蛋白")],
+    }
 
-    request = ModelRequest(
-        model=object(),
+    update = middleware.before_agent(state, runtime)
+    state.update(update or {})
+    subagent_id = state["subagent_info"].subagent_id
+
+    model = SimpleNamespace()
+    model_request = ModelRequest(
+        model=model,
         messages=[],
-        state={"messages": []},
+        state=state,
         runtime=runtime,
     )
 
-    async def handler(_request):
-        return ModelResponse(
-            result=[
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "id": "call-1",
-                            "name": "general-purpose",
-                            "args": {"topic": "low-allergen protein"},
-                        }
-                    ],
-                )
-            ]
-        )
+    async def model_handler(inner_request):
+        assert inner_request.model.metadata["subagent_id"] == subagent_id
+        return ModelResponse(result=[AIMessage(content="ok")])
 
-    await middleware.awrap_model_call(request, handler)
-    middleware.after_agent({"messages": []}, runtime)
+    await middleware.awrap_model_call(model_request, model_handler)
+
+    tool = SimpleNamespace()
+    tool_request = ToolCallRequest(
+        tool_call={"id": "tool-1", "name": "tavily_search", "args": {}},
+        tool=tool,
+        state=state,
+        runtime=runtime,
+    )
+
+    async def tool_handler(inner_request):
+        assert inner_request.tool.metadata["subagent_id"] == subagent_id
+        return ToolMessage(content="ok", tool_call_id="tool-1")
+
+    await middleware.awrap_tool_call(tool_request, tool_handler)
+    middleware.after_agent(state, runtime)
 
     event_types = [event["type"] for event in events]
     assert event_types == [
-        ProgressEventType.RESEARCH_STARTING,
-        ProgressEventType.PLAN_CREATING,
-        ProgressEventType.RESEARCH_TASK_DELEGATING,
-        ProgressEventType.PLAN_CREATED,
+        ProgressEventType.Task.EXECUTING,
+        ProgressEventType.Task.COMPLETED,
     ]
-    progress_values = [event["progress"] for event in events]
-    assert progress_values == sorted(progress_values)
+    start_event = events[0]
+    assert start_event["detail"]["view_type"] == ViewType.SUBAGENT_DISPATCH.value
+    assert start_event["detail"]["subagent_id"] == subagent_id
+    assert events[1]["detail"]["status"] == "completed"
+    assert all("progress" not in event for event in events)
 
 
 @pytest.mark.asyncio
-async def test_week_progress_stays_monotonic_across_parallel_events(monkeypatch):
+async def test_week_progress_emits_lifecycle_and_metadata_without_progress(monkeypatch):
     events = []
-    monkeypatch.setattr(progress_module, "_safe_run_key", lambda: "week-run")
     monkeypatch.setattr(progress_module, "emit_progress", lambda event_type, message, **kwargs: events.append({
         "type": event_type,
         "message": message,
@@ -87,55 +94,55 @@ async def test_week_progress_stays_monotonic_across_parallel_events(monkeypatch)
 
     middleware = progress_module.WeekProgressMiddleware()
     runtime = Runtime(context=None)
+    state = _week_state(1)
 
-    middleware.before_agent(_week_state(1), runtime)
+    middleware.before_agent(state, runtime)
 
+    tool = SimpleNamespace()
     tool_request = ToolCallRequest(
         tool_call={
             "id": "tool-1",
             "name": "ingredient_search_tool",
             "args": {"category": "白肉"},
         },
-        tool=None,
-        state=_week_state(1),
+        tool=tool,
+        state=state,
         runtime=runtime,
     )
 
-    async def tool_handler(_request):
+    async def tool_handler(inner_request):
+        assert inner_request.tool.metadata["week_number"] == 1
         return ToolMessage(content="ok", tool_call_id="tool-1")
 
     await middleware.awrap_tool_call(tool_request, tool_handler)
 
-    middleware.before_agent(_week_state(2), runtime)
-
+    model = SimpleNamespace()
     model_request = ModelRequest(
-        model=object(),
+        model=model,
         messages=[],
-        state=_week_state(1),
+        state=state,
         runtime=runtime,
     )
 
-    async def model_handler(_request):
+    async def model_handler(inner_request):
+        assert inner_request.model.metadata["week_number"] == 1
         return ModelResponse(result=[AIMessage(content="final answer")])
 
     await middleware.awrap_model_call(model_request, model_handler)
-    middleware.after_agent(_week_state(1, structured_response=object()), runtime)
+    middleware.after_agent(_week_state(1), runtime)
 
-    progress_values = [event["progress"] for event in events if event.get("progress") is not None]
-    assert progress_values == sorted(progress_values)
     assert [event["type"] for event in events] == [
-        ProgressEventType.WEEK_PLANNING,
-        ProgressEventType.WEEK_SEARCHING,
-        ProgressEventType.WEEK_PLANNING,
-        ProgressEventType.WEEK_WRITING,
-        ProgressEventType.WEEK_PLAN_READY,
-        ProgressEventType.WEEK_COMPLETED,
+        ProgressEventType.Week.PLANNING,
+        ProgressEventType.Week.COMPLETED,
     ]
+    assert events[0]["detail"]["week_number"] == 1
+    assert events[0]["detail"]["status"] == "started"
+    assert events[1]["detail"]["status"] == "completed"
+    assert all("progress" not in event for event in events)
 
 
-def test_week_after_agent_skips_incomplete_iterations(monkeypatch):
+def test_week_after_agent_emits_completed_lifecycle_without_output_gate(monkeypatch):
     events = []
-    monkeypatch.setattr(progress_module, "_safe_run_key", lambda: "week-incomplete-run")
     monkeypatch.setattr(progress_module, "emit_progress", lambda event_type, message, **kwargs: events.append({
         "type": event_type,
         "message": message,
@@ -146,5 +153,7 @@ def test_week_after_agent_skips_incomplete_iterations(monkeypatch):
     runtime = Runtime(context=None)
     middleware.after_agent(_week_state(3), runtime)
 
-    assert events == []
-
+    assert [event["type"] for event in events] == [ProgressEventType.Week.COMPLETED]
+    assert events[0]["node"] == "week_agent_3"
+    assert events[0]["detail"]["week_number"] == 3
+    assert events[0]["detail"]["status"] == "completed"

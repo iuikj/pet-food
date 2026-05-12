@@ -11,6 +11,7 @@ from src.agent.v2.tools.ingredient_tools import (
     ingredient_detail_tool,
     ingredient_categories_tool,
 )
+from src.agent.v2.middlewares.progress_middleware import sub_agent_progress_middleware
 
 ingredient_query_sub_agent = SubAgent(
     name="ingredient-query",
@@ -29,4 +30,5 @@ ingredient_query_sub_agent = SubAgent(
         "(3) 查看所有可用食材分类 (ingredient_categories_tool)。"
         "所有数据来自真实数据库。"
     ),
+    middleware=[sub_agent_progress_middleware],
 )

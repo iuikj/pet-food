@@ -69,8 +69,8 @@ ingredient_categories_tool()
 # 例：搜索高蛋白的白肉
 ingredient_search_tool(category="白肉", protein_min=20.0)
 
-# 例：搜索蔬菜类
-ingredient_search_tool(category="蔬菜")
+# 例：搜索蔬菜类（蔬菜是“谷薯果蔬”的子类别）
+ingredient_search_tool(category="谷薯果蔬", sub_category="蔬菜")
 
 # 例：搜索富含牛磺酸的内脏（猫用）
 ingredient_search_tool(category="内脏", taurine_min=50.0)
@@ -82,7 +82,7 @@ ingredient_search_tool(keyword="三文鱼")
 **原则**：
 - 先确定大类别，再在类别内筛选
 - 蛋白质来源选 2-3 种（主肉、副肉、可选内脏）
-- 蔬菜/碳水来源选 2-3 种
+- 蔬菜/碳水来源在 `谷薯果蔬` 大类内按子类别筛选 2-3 种
 - 注意本周的饮食约束和差异化要求
 
 ### Step 5: 获取核心食材的完整营养数据

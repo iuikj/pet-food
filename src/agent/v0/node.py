@@ -8,7 +8,7 @@ from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, Send
 
 from src.agent.common.entity.note import Note
-from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.stream_events import ProgressEventType, aemit_progress
 from src.agent.common.utils.struct import PetDietPlan, MonthlyDietPlan
 from src.agent.v0.state import State
 from src.agent.v0.tools import (
@@ -28,11 +28,10 @@ async def call_model(state: State, config: RunnableConfig) -> Command[Literal["t
 
     # 首次调用（无 plan）时发送"正在创建计划"进度
     if not has_plan:
-        emit_progress(
-            ProgressEventType.PLAN_CREATING,
+        await aemit_progress(
+            ProgressEventType.Research.STARTING,
             "正在分析宠物信息，制定任务计划...",
             node="call_model",
-            progress=5,
         )
 
     model = load_chat_model(
@@ -75,29 +74,24 @@ async def call_model(state: State, config: RunnableConfig) -> Command[Literal["t
 
         # 根据工具调用类型发送对应进度事件
         if name == "write_plan":
-            emit_progress(
-                ProgressEventType.PLAN_CREATED,
+            await aemit_progress(
+                ProgressEventType.Plan.CREATED,
                 "任务计划已创建",
                 node="call_model",
-                progress=10,
             )
         elif name == "finish_sub_plan":
-            progress = _estimate_progress(state)
-            emit_progress(
-                ProgressEventType.PLAN_UPDATED,
+            await aemit_progress(
+                ProgressEventType.Plan.UPDATED,
                 "任务计划已更新",
                 node="call_model",
-                progress=progress,
             )
         elif name == "transfor_task_to_subagent":
             task_name = cast(dict, args).get("content", "") if isinstance(args, dict) else ""
-            progress = _estimate_progress(state)
-            emit_progress(
-                ProgressEventType.TASK_DELEGATING,
+            await aemit_progress(
+                ProgressEventType.Task.DELEGATING,
                 f"正在委派任务: {task_name}",
                 node="call_model",
                 task_name=task_name,
-                progress=progress,
             )
             return Command(
                 goto="subagent",
@@ -113,11 +107,10 @@ async def call_model(state: State, config: RunnableConfig) -> Command[Literal["t
 
     # 所有任务完成，进入结构化阶段
     notes: dict[str, Note] = state["note"]
-    emit_progress(
-        ProgressEventType.GATHERING,
+    await aemit_progress(
+        ProgressEventType.Result.GATHERING,
         "所有任务已完成，正在进入结构化解析阶段...",
         node="call_model",
-        progress=80,
     )
     return Command(
         goto=[Send(
@@ -130,27 +123,13 @@ async def call_model(state: State, config: RunnableConfig) -> Command[Literal["t
     )
 
 
-def _estimate_progress(state: State) -> int:
-    """根据 plan 完成情况估算当前进度 (10-80%)"""
-    plan = state.get("plan")
-    if not plan:
-        return 10
-    total = len(plan)
-    if total == 0:
-        return 10
-    done = sum(1 for item in plan if getattr(item, "status", None) == "done")
-    # 映射到 10-80 区间
-    return 10 + int((done / total) * 70)
-
-
 async def gather(state: State):
     weekly_plans = state.get("weekly_diet_plans", [])
-    emit_progress(
-        ProgressEventType.COMPLETED,
+    await aemit_progress(
+        ProgressEventType.Result.COMPLETED,
         f"月度饮食计划生成完成！共 {len(weekly_plans)} 周计划",
         node="gather",
         detail={"total_weeks": len(weekly_plans)},
-        progress=100,
     )
     return {
         "report": PetDietPlan(

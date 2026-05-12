@@ -14,7 +14,10 @@ from langchain_dev_utils.tool_calling import has_tool_calling, parse_tool_callin
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command
 
-from src.agent.common.stream_events import ProgressEventType, emit_progress
+from src.agent.common.stream_events import (
+    ProgressEventType,
+    aemit_progress,
+)
 from src.agent.common.tools import tavily_search
 from src.agent.v1.models import WeekAssignment
 from src.agent.v1.utils.context import resolve_context
@@ -39,18 +42,17 @@ async def week_planner(
     week_num = assignment.week_number
     info = state["pet_information"]
     shared_notes = state.get("shared_notes") or {}
+    week_node = f"week_agent_{week_num}"
+    task_label = f"第{week_num}周饮食计划"
 
     # 首次进入时发送进度
     if not state.get("week_messages"):
-        base_progress = 30 + (week_num - 1) * 12
-        emit_progress(
-            ProgressEventType.WEEK_PLANNING,
+        await aemit_progress(
+            ProgressEventType.Week.PLANNING,
             f"第{week_num}周: 开始制定饮食计划...",
-            node=f"week_agent_{week_num}",
-            task_name=f"第{week_num}周饮食计划",
-            progress=base_progress,
+            node=week_node,
+            task_name=task_label,
         )
-
     # 构建提示词
     shared_notes_list = (
         "\n".join(f"- {name}" for name in shared_notes.keys())
@@ -95,16 +97,16 @@ async def week_planner(
     response = await bind_model.ainvoke(messages_to_send)
 
     if has_tool_calling(response):
-        tool_name, _ = parse_tool_calling(
+        tool_name, tool_args = parse_tool_calling(
             response, first_tool_call_only=True
         )
 
         if tool_name == "tavily_search":
-            emit_progress(
-                ProgressEventType.WEEK_SEARCHING,
+            await aemit_progress(
+                ProgressEventType.Week.SEARCHING,
                 f"第{week_num}周: 正在搜索相关食材信息...",
-                node=f"week_agent_{week_num}",
-                task_name=f"第{week_num}周饮食计划",
+                node=week_node,
+                task_name=task_label,
             )
 
         return Command(
@@ -113,13 +115,11 @@ async def week_planner(
         )
 
     # 无工具调用 — 计划已完成，进入写入阶段
-    base_progress = 30 + (week_num - 1) * 12 + 8
-    emit_progress(
-        ProgressEventType.WEEK_PLAN_READY,
+    await aemit_progress(
+        ProgressEventType.Week.WRITING,
         f"第{week_num}周: 饮食计划制定完成，正在保存...",
-        node=f"week_agent_{week_num}",
-        task_name=f"第{week_num}周饮食计划",
-        progress=base_progress,
+        node=week_node,
+        task_name=task_label,
     )
 
     return Command(
@@ -136,12 +136,14 @@ async def week_write(state: WeekAgentState, config: RunnableConfig) -> Command[L
     ctx = resolve_context(config)
     assignment: WeekAssignment = state["week_assignment"]
     week_num = assignment.week_number
+    week_node = f"week_agent_{week_num}"
+    task_label = f"第{week_num}周饮食计划"
 
-    emit_progress(
-        ProgressEventType.WEEK_WRITING,
+    await aemit_progress(
+        ProgressEventType.Week.WRITING,
         f"第{week_num}周: 正在保存饮食计划笔记...",
-        node=f"week_agent_{week_num}",
-        task_name=f"第{week_num}周饮食计划",
+        node=week_node,
+        task_name=task_label,
     )
 
     # 获取最后的计划内容
@@ -178,18 +180,18 @@ async def week_finalize(state: WeekAgentState):
     """
     assignment: WeekAssignment = state["week_assignment"]
     week_num = assignment.week_number
+    week_node = f"week_agent_{week_num}"
+    task_label = f"第{week_num}周饮食计划"
 
     # 验证 note 已写入
     notes = state.get("note") or {}
     note_count = len(notes)
 
-    base_progress = 30 + week_num * 12
-    emit_progress(
-        ProgressEventType.WEEK_COMPLETED,
+    await aemit_progress(
+        ProgressEventType.Week.COMPLETED,
         f"第{week_num}周: 饮食计划完成 (已保存 {note_count} 条笔记)",
-        node=f"week_agent_{week_num}",
-        task_name=f"第{week_num}周饮食计划",
-        progress=min(base_progress, 78),
+        node=week_node,
+        task_name=task_label,
     )
 
     # 无需返回任何状态更新 — note 已在 week_write_note 工具中直接写入
