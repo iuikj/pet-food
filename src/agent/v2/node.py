@@ -16,6 +16,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import after_agent
 from langchain.agents.structured_output import ToolStrategy
 from langchain.messages import HumanMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_dev_utils.chat_models import load_chat_model
 from langgraph.runtime import Runtime, get_runtime
 from langgraph.types import Command, Send
@@ -276,10 +277,13 @@ async def _generate_ai_suggestions(
         return "请保证每日饮水充足，循序渐进切换饮食，留意过敏与消化反应。"
 
 
-async def gather_and_structure(state: State):
+async def gather_and_structure(state: State, config: RunnableConfig):
     """从 week_light_plans 批量拉 Ingredient 行，纯 Python 组装 PetDietPlan。"""
     ctx: ContextV2 = get_runtime().context
     light_plans: list[WeekLightPlan] = list(state.get("week_light_plans") or [])
+
+    # 从 runtime config 提取 thread_id 作为 plan_id（AG-UI 全链路一致）
+    plan_id = (config.get("configurable") or {}).get("thread_id")
 
     await aemit_progress(
         ProgressEventType.Result.GATHERING,
@@ -338,6 +342,43 @@ async def gather_and_structure(state: State):
         for plan in weekly_plans
     ]
 
+    # AG-UI 路径写 Redis 临时计划，与 plan_service._save_temp_plan 对齐
+    # 否则前端调 confirmPlan(plan_id) 时 Redis key 不存在 → 404
+    if plan_id:
+        try:
+            from datetime import datetime, timezone
+            from src.db.redis import set_json
+            from src.utils.strtuct import PetInformation
+
+            pet_info_obj = ctx.pet_information
+            pet_info_dict = (
+                pet_info_obj.model_dump() if hasattr(pet_info_obj, "model_dump")
+                else (pet_info_obj or {})
+            )
+            pet_info_filtered = {
+                k: v for k, v in pet_info_dict.items()
+                if k in PetInformation.model_fields
+            }
+            temp_data = {
+                "plan_id": plan_id,
+                "user_id": ctx.user_id,
+                "task_id": plan_id,
+                "pet_info": pet_info_dict,
+                "plan_data": {
+                    "pet_information": pet_info_filtered,
+                    "ai_suggestions": ai_suggestions,
+                    "pet_diet_plan": {"monthly_diet_plan": serialized_plans},
+                },
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            ok = await set_json(f"temp_plan:{plan_id}", temp_data, expire=86400)
+            if ok:
+                logger.info("AG-UI 临时计划已存入 Redis: temp_plan:%s (TTL 24h)", plan_id)
+            else:
+                logger.error("AG-UI 临时计划存入 Redis 失败: temp_plan:%s", plan_id)
+        except Exception as exc:
+            logger.warning("AG-UI 写 Redis 临时计划异常: %s", exc)
+
     await aemit_progress(
         ProgressEventType.Result.COMPLETED,
         "月度饮食计划全部生成完成",
@@ -345,6 +386,7 @@ async def gather_and_structure(state: State):
         detail={
             "plans": serialized_plans,
             "ai_suggestions": ai_suggestions,
+            "plan_id": plan_id,
         },
     )
 
