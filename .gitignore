@@ -212,3 +212,8 @@ QWEN.md
 
 
 jupyter
+
+# Local scripts & outputs
+outputs/
+scripts/format_v2_recipe_markdown.py
+scripts/run_v2_recipe_batch.py
